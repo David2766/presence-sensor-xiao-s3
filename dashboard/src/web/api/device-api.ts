@@ -5,6 +5,15 @@ import type { DeviceApi, FirmwareUploadProgress, WebControlStatus, WebSystemStat
 const deviceBaseUrl = normalizeDeviceBaseUrl(new URLSearchParams(window.location.search).get("device") || "");
 const UPLOAD_CHUNK_BYTES = 192;
 
+class HttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+  }
+}
+
 function normalizeDeviceBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (!trimmed) return "";
@@ -19,7 +28,7 @@ function endpoint(path: string): string {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(endpoint(url), init);
   if (!response.ok) {
-    throw new Error(await responseErrorText(response));
+    throw new HttpError(await responseErrorText(response), response.status);
   }
   return response.json() as Promise<T>;
 }
@@ -27,7 +36,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 async function requestOk(url: string, init?: RequestInit): Promise<void> {
   const response = await fetch(endpoint(url), init);
   if (!response.ok) {
-    throw new Error(await responseErrorText(response));
+    throw new HttpError(await responseErrorText(response), response.status);
   }
 }
 
@@ -142,6 +151,22 @@ interface StoredStatsFile extends Partial<WebDeviceStats> {
   updatedAt?: number;
 }
 
+function emptyDeviceConfig(): WebDeviceConfig {
+  return {
+    version: 1,
+    zones: [],
+    calibrationZones: [],
+    floorplan: {
+      enabled: false,
+      hasImage: false
+    }
+  };
+}
+
+function isMissingDeviceConfig(error: unknown): boolean {
+  return error instanceof HttpError && error.status === 404 && /config_not_found|not_found|404/i.test(error.message);
+}
+
 export const deviceApi: DeviceApi = {
   async getState(): Promise<WebDeviceState> {
     const state = await requestJson<WebDeviceState>("/api/state");
@@ -152,7 +177,14 @@ export const deviceApi: DeviceApi = {
   },
 
   async getConfig(): Promise<WebDeviceConfig> {
-    return requestJson<WebDeviceConfig>("/api/config");
+    try {
+      return await requestJson<WebDeviceConfig>("/api/config");
+    } catch (error) {
+      if (isMissingDeviceConfig(error)) {
+        return emptyDeviceConfig();
+      }
+      throw error;
+    }
   },
 
   async getStats(): Promise<WebDeviceStats> {
