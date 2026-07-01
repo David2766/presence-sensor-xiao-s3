@@ -25,6 +25,24 @@ https://github.com/David2766/radar-zone-card-for-LD2450
 - BH1750 조도 센서
 - SHT4x 온습도 센서
 
+## 핀 연결
+
+이 펌웨어는 Seeed Studio XIAO ESP32S3의 아래 핀 배열을 기준으로 작성되어 있습니다.
+
+| 기능 | XIAO 표기 | ESP32 GPIO | 연결 대상 |
+| --- | --- | --- | --- |
+| PIR 입력 | D0 | GPIO1 | PIR 센서 OUT |
+| I2C SDA | D4 | GPIO5 | BH1750 SDA, SHT4x SDA |
+| I2C SCL | D5 | GPIO6 | BH1750 SCL, SHT4x SCL |
+| LD2450 UART TX | D6 | GPIO43 | LD2450 RX |
+| LD2450 UART RX | D7 | GPIO44 | LD2450 TX |
+| 상태 LED | 내장 LED | GPIO21 | XIAO 내장 사용자 LED |
+| 초기화 버튼 | BOOT | GPIO0 | XIAO BOOT 버튼 |
+
+LD2450의 TX/RX는 XIAO와 교차 연결합니다. 즉, XIAO의 TX는 LD2450의 RX로, XIAO의 RX는 LD2450의 TX로 연결합니다.
+
+BH1750과 SHT4x는 같은 I2C 버스를 공유합니다. 전원은 각 모듈의 동작 전압을 확인한 뒤 연결하고, 모든 모듈의 GND는 XIAO의 GND와 공통으로 묶어야 합니다.
+
 ## 기기 이름
 
 배포용 펌웨어는 ESPHome의 `name_add_mac_suffix`를 사용합니다.
