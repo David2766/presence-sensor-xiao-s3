@@ -7,11 +7,13 @@
 #include "device_config_handler.h"
 #include "floorplan_handler.h"
 #include "radar_storage.h"
+#include "setup_handler.h"
 #include "state_handler.h"
 #include "stats_store.h"
 #include "stats_handler.h"
 #include "system_handler.h"
 #include "esphome/core/component.h"
+#include "esphome/components/wifi/wifi_component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 
 namespace esphome {
@@ -22,7 +24,7 @@ class RadarApiServer : public Component, public AsyncWebHandler {
   explicit RadarApiServer(web_server_base::WebServerBase *base)
       : base_(base), floorplan_handler_(&storage_), device_config_handler_(&storage_, &device_config_cache_),
         stats_handler_(&stats_store_, &storage_), system_handler_(&storage_), state_handler_(&state_json_),
-        control_handler_(&control_state_) {}
+        control_handler_(&control_state_), setup_handler_(this) {}
 
   void setup() override;
   void dump_config() override;
@@ -43,6 +45,9 @@ class RadarApiServer : public Component, public AsyncWebHandler {
     return this->stats_store_.finish_day(finished_day_json, new_today_json);
   }
   void update_state_json(const std::string &json) { this->state_json_ = json; }
+  void save_wifi_sta_deferred(std::string ssid, std::string password) {
+    this->defer([ssid, password]() { wifi::global_wifi_component->save_wifi_sta(ssid.c_str(), password.c_str()); });
+  }
   void update_control_status(bool status_led_enabled, float led_blink_duration, bool environment_correction_enabled,
                              float temperature_offset, float humidity_offset) {
     this->control_state_.status_led_enabled = status_led_enabled;
@@ -106,6 +111,7 @@ class RadarApiServer : public Component, public AsyncWebHandler {
   SystemHandler system_handler_;
   StateHandler state_handler_;
   ControlHandler control_handler_;
+  SetupHandler setup_handler_;
 };
 
 }  // namespace radar_api_server

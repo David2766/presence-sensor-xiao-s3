@@ -2,6 +2,31 @@ import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 export default defineConfig(({ mode }) => {
+  if (mode === "demo") {
+    return {
+      base: "/presence-sensor-xiao-s3/",
+      plugins: [svelte()],
+      build: {
+        outDir: "dist-demo",
+        emptyOutDir: true,
+        sourcemap: true,
+        rollupOptions: {
+          input: "index.html",
+          output: {
+            entryFileNames: "assets/dashboard.js",
+            chunkFileNames: "assets/dashboard-[name].js",
+            assetFileNames: (assetInfo) => {
+              if (assetInfo.name?.endsWith(".css")) {
+                return "assets/dashboard.css";
+              }
+              return "assets/[name][extname]";
+            }
+          }
+        }
+      }
+    };
+  }
+
   if (mode === "web") {
     return {
       base: "/dashboard/",

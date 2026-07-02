@@ -22,6 +22,8 @@ void RadarApiServer::setup() {
 
 void RadarApiServer::dump_config() {
   ESP_LOGCONFIG(TAG, "Radar API Server:");
+  ESP_LOGCONFIG(TAG, "  Setup: /setup");
+  ESP_LOGCONFIG(TAG, "  Setup API: GET /api/setup/status|networks, POST /api/setup/wifi");
   ESP_LOGCONFIG(TAG, "  Dashboard: /dashboard");
   ESP_LOGCONFIG(TAG, "  Floorplan Status API: /api/floorplan/status");
   ESP_LOGCONFIG(TAG, "  Floorplan Config API: GET/POST /api/floorplan");
@@ -37,16 +39,19 @@ void RadarApiServer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Floorplan Upload API: POST /api/floorplan/upload/start|chunk|commit");
 }
 
-float RadarApiServer::get_setup_priority() const { return setup_priority::WIFI - 1.0f; }
+float RadarApiServer::get_setup_priority() const { return setup_priority::DATA + 1.0f; }
 
 bool RadarApiServer::canHandle(AsyncWebServerRequest *request) const {
-  return this->dashboard_handler_.can_handle(request) || this->floorplan_handler_.can_handle(request) ||
+  return this->setup_handler_.can_handle(request) || this->dashboard_handler_.can_handle(request) ||
+         this->floorplan_handler_.can_handle(request) ||
          this->device_config_handler_.can_handle(request) || this->stats_handler_.can_handle(request) ||
          this->system_handler_.can_handle(request) || this->state_handler_.can_handle(request) ||
          this->control_handler_.can_handle(request);
 }
 
 void RadarApiServer::handleRequest(AsyncWebServerRequest *request) {
+  if (this->setup_handler_.handle(request))
+    return;
   if (this->dashboard_handler_.handle(request))
     return;
   if (this->floorplan_handler_.handle(request))

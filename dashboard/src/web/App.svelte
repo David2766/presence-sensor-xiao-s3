@@ -11,6 +11,7 @@
   import MapToolbar from "./components/MapToolbar.svelte";
   import ProtectedZoneDialog from "./components/ProtectedZoneDialog.svelte";
   import RadarScene from "./components/RadarScene.svelte";
+  import SetupMockPanel from "./components/SetupMockPanel.svelte";
   import ShrinkConfirmDialog from "./components/ShrinkConfirmDialog.svelte";
   import StatsPanel from "./components/StatsPanel.svelte";
   import ZonePanel from "./components/ZonePanel.svelte";
@@ -45,7 +46,10 @@
 
   const searchParams = new URLSearchParams(window.location.search);
   const deviceBaseUrl = searchParams.get("device")?.trim() || "";
-  const useMockApi = searchParams.get("mock") === "1" || (!deviceBaseUrl && window.location.hostname === "localhost");
+  const isDemoHost = window.location.hostname === "localhost" || window.location.hostname.endsWith(".github.io");
+  const useSetupMock = searchParams.get("setup") === "1" && isDemoHost;
+  const useDemoMode = useSetupMock || searchParams.get("demo") === "1" || window.location.hostname.endsWith(".github.io");
+  const useMockApi = useDemoMode || searchParams.get("mock") === "1" || (!deviceBaseUrl && window.location.hostname === "localhost");
   const api: DeviceApi = useMockApi ? mockApi : deviceApi;
 
   const zoneTypeLabels: Record<WebZoneType, string> = {
@@ -179,7 +183,11 @@
         : "선택 없음"
   );
 
-  onMount(() => {
+onMount(() => {
+    if (useSetupMock) {
+      return;
+    }
+
     radarPolling.start();
 
     window.addEventListener("pointermove", radarInteraction.handlePointerMove);
@@ -587,13 +595,21 @@
   }
 </script>
 
+{#if useSetupMock}
+  <SetupMockPanel />
+{:else}
 <main class="app-shell">
   <header class="top-bar">
     <div>
       <h1>Radar Zone Configurator</h1>
-      <p>{useMockApi ? "Mock 데이터로 확인 중입니다." : "실시간 위치와 구역 설정을 한 화면에서 확인합니다."}</p>
+      <p>{useDemoMode ? "데모 모드입니다. 실제 기기에 저장되지 않습니다." : useMockApi ? "Mock 데이터로 확인 중입니다." : "실시간 위치와 구역 설정을 한 화면에서 확인합니다."}</p>
     </div>
-    <div class="status-pill" data-status data-tone={statusTone}>{statusText}</div>
+    <div class="top-status-group">
+      {#if useDemoMode}
+        <div class="demo-pill">데모</div>
+      {/if}
+      <div class="status-pill" data-status data-tone={statusTone}>{statusText}</div>
+    </div>
   </header>
   <div class="toast" data-toast data-visible={errorText ? "true" : "false"}>{errorText}</div>
 
@@ -827,3 +843,4 @@
   onCancel={radarInteraction.cancelCalibrationShrink}
   onConfirm={radarInteraction.unlockCalibrationMinSize}
 />
+{/if}

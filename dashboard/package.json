@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "build:web": "vite build --mode web",
+    "build:demo": "vite build --mode demo",
     "build:dashboard": "npm run build:web && node scripts/generate-dashboard-assets.mjs",
     "dev:web": "vite --mode web",
     "typecheck": "tsc --noEmit",

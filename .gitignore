@@ -7,6 +7,7 @@ secrets.yaml
 **/.vite/
 **/.svelte-kit/
 **/dist-web/
+**/dist-demo/
 **/dist/
 **/coverage/
 **/playwright-report/

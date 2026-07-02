@@ -108,6 +108,23 @@ button:disabled {
   font-size: var(--rz-font-help);
 }
 
+.top-status-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.demo-pill {
+  padding: 7px 10px;
+  border: 1px solid rgba(25, 179, 148, 0.34);
+  border-radius: 999px;
+  background: rgba(25, 179, 148, 0.12);
+  color: #7de2c8;
+  font-size: var(--rz-font-help);
+  font-weight: var(--rz-weight-button);
+}
+
 .status-pill {
   flex: 0 0 auto;
   min-width: 82px;
