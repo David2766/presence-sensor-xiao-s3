@@ -7,6 +7,7 @@
     loadFloorplanStorageStatus
   } from "../floorplan/floorplan-storage-client";
   import FloorplanRadarPlacementOverlay from "./FloorplanRadarPlacementOverlay.svelte";
+  import RadarScene from "./RadarScene.svelte";
   import type { WebControlStatus, WebDeviceConfig, WebDeviceState, WebSystemStatus } from "../types";
 
   type TabTarget = "zones" | "floorplan" | "stats" | "backup";
@@ -23,6 +24,7 @@
     controlActionBusy: boolean;
     updatedText: string;
     floorplanStorageBaseUrl: string;
+    floorplanStorageFetcher?: typeof fetch;
     onNavigate: (tab: TabTarget) => void;
     onSetStatusLed: (enabled: boolean) => void | Promise<void>;
     onSetLedBlinkDuration: (seconds: number) => void | Promise<void>;
@@ -43,6 +45,7 @@
     controlActionBusy,
     updatedText,
     floorplanStorageBaseUrl,
+    floorplanStorageFetcher,
     onNavigate,
     onSetStatusLed,
     onSetLedBlinkDuration,
@@ -158,15 +161,15 @@
     floorplanLoading = true;
     floorplanError = "";
     try {
-      const status = await loadFloorplanStorageStatus({ baseUrl: floorplanStorageBaseUrl });
+      const status = await loadFloorplanStorageStatus({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher });
       if (!status.hasConfig || !status.hasImage) {
         floorplanDocument = null;
         floorplanError = "저장된 평면도 데이터가 없습니다.";
         return;
       }
       const [document, image] = await Promise.all([
-        loadFloorplanStorageDocument({ baseUrl: floorplanStorageBaseUrl }),
-        loadFloorplanStorageImage({ baseUrl: floorplanStorageBaseUrl })
+        loadFloorplanStorageDocument({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher }),
+        loadFloorplanStorageImage({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher })
       ]);
       if (floorplanImageUrl) URL.revokeObjectURL(floorplanImageUrl);
       floorplanDocument = document;
@@ -405,7 +408,7 @@
               showPlacementLabel={false}
             />
           </div>
-        {:else}
+        {:else if hasFloorplan || floorplanLoading || floorplanError}
           <div class="dashboard-visual-placeholder">
             <strong>
               {floorplanLoading
@@ -421,6 +424,10 @@
                   ? "저장된 평면도 이미지를 불러오고 있습니다."
                   : "저장된 평면도가 없으면 레이더맵이 이 영역에 표시됩니다."}
             </span>
+          </div>
+        {:else}
+          <div class="dashboard-radar-preview">
+            <RadarScene state={deviceState} {config} />
           </div>
         {/if}
       </div>

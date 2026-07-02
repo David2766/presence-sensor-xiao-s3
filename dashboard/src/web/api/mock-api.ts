@@ -1,7 +1,111 @@
-import type { WebDeviceConfig, WebDeviceState, WebDeviceStats } from "../../core/types";
+import type { WebDeviceConfig, WebDeviceState, WebDeviceStats, WebStatsEntry } from "../../core/types";
+import { saveMockFloorplan } from "../floorplan/mock-floorplan-storage";
 import type { DeviceApi, WebSystemStatus } from "../types";
 
 const startTime = Date.now();
+const HEATMAP_COLS = 33;
+const HEATMAP_ROWS = 26;
+const HEATMAP_CELL_COUNT = HEATMAP_COLS * HEATMAP_ROWS;
+
+function plainClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function dayKeyFromDate(date: Date): number {
+  return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+}
+
+function dateFromOffset(daysAgo: number): Date {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() - daysAgo);
+  return date;
+}
+
+function makeStatsEntry(daysAgo: number): WebStatsEntry {
+  const wave = Math.sin(daysAgo * 0.72);
+  const weekendBoost = daysAgo % 7 === 0 || daysAgo % 7 === 6 ? 6 : 0;
+  const base = 26 + Math.round(wave * 7) + weekendBoost;
+  const filterHits = 5 + ((daysAgo * 3) % 9);
+  const reducedHits = 2 + ((daysAgo * 5) % 6);
+  return {
+    d: dayKeyFromDate(dateFromOffset(daysAgo)),
+    f: filterHits,
+    r: reducedHits,
+    fz: [filterHits, Math.max(1, Math.floor(filterHits * 0.55)), daysAgo % 4, daysAgo % 3],
+    rz: [reducedHits, Math.max(0, Math.floor(reducedHits * 0.5)), daysAgo % 2, (daysAgo + 1) % 2],
+    sz: [
+      Math.max(0, base),
+      Math.max(0, base - 7 + (daysAgo % 5)),
+      Math.max(0, Math.floor(base * 0.55)),
+      daysAgo % 6,
+      (daysAgo * 2) % 5,
+      daysAgo % 4
+    ]
+  };
+}
+
+function makeHeatmapRle(daysAgo: number): string {
+  const cells = Array.from({ length: HEATMAP_CELL_COUNT }, () => 0);
+  const centers = [
+    { col: 15 + Math.sin(daysAgo * 0.45) * 3.5, row: 8 + Math.cos(daysAgo * 0.31) * 2.3, weight: 8 },
+    { col: 10 + Math.cos(daysAgo * 0.26) * 2.2, row: 14 + Math.sin(daysAgo * 0.38) * 2.5, weight: 5 },
+    { col: 22 + Math.sin(daysAgo * 0.21) * 2.8, row: 17 + Math.cos(daysAgo * 0.42) * 2.1, weight: 4 }
+  ];
+
+  for (let row = 0; row < HEATMAP_ROWS; row += 1) {
+    for (let col = 0; col < HEATMAP_COLS; col += 1) {
+      let value = 0;
+      for (const center of centers) {
+        const dx = (col - center.col) / 2.4;
+        const dy = (row - center.row) / 1.8;
+        const distance = dx * dx + dy * dy;
+        if (distance < 5.4) {
+          value += Math.max(0, Math.round(center.weight * (1 - distance / 5.4)));
+        }
+      }
+      if ((row + col + daysAgo) % 19 === 0) value += 1;
+      cells[row * HEATMAP_COLS + col] = value;
+    }
+  }
+
+  return encodeHeatmapRle(cells);
+}
+
+function encodeHeatmapRle(cells: number[]): string {
+  const tokens: string[] = [];
+  let current = Math.max(0, Math.round(cells[0] ?? 0));
+  let count = 0;
+  for (const raw of cells) {
+    const value = Math.max(0, Math.round(raw));
+    if (value === current) {
+      count += 1;
+    } else {
+      tokens.push(`${current}x${count}`);
+      current = value;
+      count = 1;
+    }
+  }
+  if (count > 0) tokens.push(`${current}x${count}`);
+  return tokens.join(",");
+}
+
+function createDemoStats(): WebDeviceStats {
+  const entries = Array.from({ length: 30 }, (_, index) => makeStatsEntry(index));
+  return {
+    today: entries[0] ?? null,
+    daily: entries.slice(1),
+    heatmap: {
+      version: 1,
+      cols: HEATMAP_COLS,
+      rows: HEATMAP_ROWS,
+      cellMm: 300,
+      encoding: "rle",
+      today: makeHeatmapRle(0),
+      daily: entries.slice(1).map((entry, index) => ({ d: entry.d, data: makeHeatmapRle(index + 1) }))
+    }
+  };
+}
 
 let config: WebDeviceConfig = {
   version: 1,
@@ -37,37 +141,12 @@ let config: WebDeviceConfig = {
     hasImage: false
   }
 };
-let floorplanDocument: unknown = null;
-let floorplanImage: Blob | null = null;
 let statusLedEnabled = true;
 let ledBlinkDuration = 60;
 let environmentCorrectionEnabled = true;
 let temperatureOffset = 0;
 let humidityOffset = 0;
-let stats: WebDeviceStats = {
-  today: {
-    d: 20260622,
-    f: 14,
-    r: 6,
-    fz: [8, 4, 2, 0],
-    rz: [3, 2, 1, 0],
-    sz: [12, 7, 3, 0, 0, 1]
-  },
-  daily: [
-    { d: 20260621, f: 18, r: 9, fz: [9, 6, 3, 0], rz: [5, 3, 1, 0], sz: [14, 8, 4, 1, 0, 2] },
-    { d: 20260620, f: 11, r: 5, fz: [6, 4, 1, 0], rz: [3, 1, 1, 0], sz: [9, 5, 2, 0, 0, 1] },
-    { d: 20260618, f: 7, r: 2, fz: [4, 2, 1, 0], rz: [1, 1, 0, 0], sz: [6, 3, 1, 0, 0, 0] }
-  ],
-  heatmap: {
-    version: 1,
-    cols: 33,
-    rows: 26,
-    cellMm: 300,
-    encoding: "rle",
-    today: "",
-    daily: []
-  }
-};
+let stats: WebDeviceStats = createDemoStats();
 
 export const mockApi: DeviceApi = {
   async getState(): Promise<WebDeviceState> {
@@ -106,11 +185,11 @@ export const mockApi: DeviceApi = {
   },
 
   async getConfig(): Promise<WebDeviceConfig> {
-    return structuredClone(config);
+    return plainClone(config);
   },
 
   async getStats(): Promise<WebDeviceStats> {
-    return structuredClone(stats);
+    return plainClone(stats);
   },
 
   async getSystemStatus(): Promise<WebSystemStatus> {
@@ -189,11 +268,11 @@ export const mockApi: DeviceApi = {
   },
 
   async saveConfig(nextConfig: WebDeviceConfig): Promise<void> {
-    config = structuredClone(nextConfig);
+    config = plainClone(nextConfig);
   },
 
   async saveStats(nextStats: WebDeviceStats): Promise<void> {
-    stats = structuredClone(nextStats);
+    stats = plainClone(nextStats);
   },
 
   async setStatusLed(enabled: boolean): Promise<void> {
@@ -217,8 +296,7 @@ export const mockApi: DeviceApi = {
   },
 
   async saveFloorplan(document, image): Promise<void> {
-    floorplanDocument = structuredClone(document);
-    floorplanImage = image;
+    await saveMockFloorplan(document, image);
   },
 
   async uploadFirmware(file, onProgress): Promise<void> {

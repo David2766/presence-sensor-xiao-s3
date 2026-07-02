@@ -22,6 +22,7 @@
     systemStatus: WebSystemStatus | null;
     systemStatusLoading: boolean;
     systemStatusError: string;
+    demoMode?: boolean;
     issueText: (issue: BackupIssue) => string;
     onExport: () => void;
     onImportFile: (file: File | null) => void;
@@ -52,6 +53,7 @@
     systemStatus,
     systemStatusLoading,
     systemStatusError,
+    demoMode = false,
     issueText,
     onExport,
     onImportFile,
@@ -73,19 +75,41 @@
   let firmwareUploadLoaded = $state(0);
   let firmwareUploadTotal = $state(0);
   let firmwareUploadMessage = $state("");
+  let demoNoticeOpen = $state(false);
+  let demoNoticeTitle = $state("");
+  let demoNoticeMessage = $state("");
+
+  function showDemoNotice(title: string, message: string): void {
+    demoNoticeTitle = title;
+    demoNoticeMessage = message;
+    demoNoticeOpen = true;
+  }
 
   function openFilePicker(): void {
+    if (demoMode) {
+      showDemoNotice("데모에서는 복원할 수 없습니다.", "데모 페이지는 실제 장치 데이터를 덮어쓰지 않도록 복원 기능을 막아두었습니다.");
+      return;
+    }
     fileInput?.click();
   }
 
   function handleFileChange(event: Event): void {
     const input = event.currentTarget as HTMLInputElement;
+    if (demoMode) {
+      input.value = "";
+      showDemoNotice("데모에서는 복원할 수 없습니다.", "백업 파일 검증과 복원 API 호출은 실제 장치에서만 사용할 수 있습니다.");
+      return;
+    }
     onImportFile(input.files?.[0] || null);
     input.value = "";
   }
 
   function openFirmwareFilePicker(): void {
     if (firmwareUploadStage === "uploading") return;
+    if (demoMode) {
+      showDemoNotice("데모에서는 업데이트할 수 없습니다.", "펌웨어 업로드는 장치를 재부팅할 수 있는 작업이라 데모에서는 API 호출을 모두 막아두었습니다.");
+      return;
+    }
     firmwareFileInput?.click();
   }
 
@@ -102,6 +126,10 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0] || null;
     input.value = "";
+    if (demoMode) {
+      showDemoNotice("데모에서는 업데이트할 수 없습니다.", "선택한 펌웨어 파일은 업로드되지 않습니다. 실제 장치에서만 업데이트를 진행할 수 있습니다.");
+      return;
+    }
     if (!file) return;
 
     firmwareFile = null;
@@ -162,6 +190,10 @@
   }
 
   function handleConfirmImport(): void {
+    if (demoMode) {
+      showDemoNotice("데모에서는 복원할 수 없습니다.", "선택한 백업 데이터는 실제 장치에서만 가져올 수 있습니다.");
+      return;
+    }
     onConfirmImport();
   }
 
@@ -643,3 +675,15 @@
     </section>
   </section>
 </section>
+
+{#if demoNoticeOpen}
+  <div class="demo-blocker-backdrop" role="presentation">
+    <div class="demo-blocker-dialog" role="dialog" aria-modal="true" aria-labelledby="demo-blocker-title">
+      <div>
+        <strong id="demo-blocker-title">{demoNoticeTitle}</strong>
+        <span>{demoNoticeMessage}</span>
+      </div>
+      <button type="button" class="danger-button" onclick={() => (demoNoticeOpen = false)}>닫기</button>
+    </div>
+  </div>
+{/if}

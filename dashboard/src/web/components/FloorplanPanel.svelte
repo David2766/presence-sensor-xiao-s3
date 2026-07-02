@@ -65,6 +65,7 @@
     deviceConfig = null,
     deviceState = null,
     floorplanStorageBaseUrl = "",
+    floorplanStorageFetcher,
     onUpdateDeviceConfig,
     onSaveFloorplan
   } = $props();
@@ -2234,7 +2235,7 @@
     storedFloorplanCheckBusy = true;
     storedFloorplanCheckError = "";
     try {
-      const status = await loadFloorplanStorageStatus({ baseUrl: floorplanStorageBaseUrl });
+      const status = await loadFloorplanStorageStatus({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher });
       const hasStoredFloorplan = status.ok === true && status.hasConfig === true && status.hasImage === true;
       storedFloorplanDetected = hasStoredFloorplan;
       if (hasStoredFloorplan) {
@@ -2250,8 +2251,8 @@
 
   async function loadStoredFloorplan() {
     const [document, image] = await Promise.all([
-      loadFloorplanStorageDocument({ baseUrl: floorplanStorageBaseUrl }),
-      loadFloorplanStorageImage({ baseUrl: floorplanStorageBaseUrl })
+      loadFloorplanStorageDocument({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher }),
+      loadFloorplanStorageImage({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher })
     ]);
     if (storedFloorplanImageUrl) URL.revokeObjectURL(storedFloorplanImageUrl);
     storedFloorplanDocument = document;
@@ -2312,7 +2313,7 @@
     storedFloorplanDeleteBusy = true;
     storedFloorplanDeleteError = "";
     try {
-      await deleteFloorplanStorage({ baseUrl: floorplanStorageBaseUrl });
+      await deleteFloorplanStorage({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher });
       if (storedFloorplanImageUrl) URL.revokeObjectURL(storedFloorplanImageUrl);
       storedFloorplanImageUrl = "";
       storedFloorplanDocument = null;
@@ -2464,7 +2465,7 @@
     storedFloorplanSaveTone = "saving";
     storedFloorplanSaveStatus = "ESP32에 평면도 설정을 저장하는 중입니다.";
     try {
-      await saveFloorplanStorageDocument(document, { baseUrl: floorplanStorageBaseUrl });
+      await saveFloorplanStorageDocument(document, { baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher });
       storedFloorplanDocument = document;
       storedFloorplanDirty = false;
       storedFloorplanSaveTone = "ok";

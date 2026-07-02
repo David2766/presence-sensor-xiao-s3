@@ -22,6 +22,7 @@
     saveFloorplanStorage,
     saveFloorplanStorageDocument
   } from "./floorplan/floorplan-storage-client";
+  import { mockFloorplanStorageFetch, resetMockFloorplanStorage } from "./floorplan/mock-floorplan-storage";
   import { MAX_SOFTWARE_ZONES } from "../core/constants";
   import type { BackupFloorplanData } from "../core/config-backup";
   import { calibrationType, isEmptyZone, normalizeSoftwareConfig, zoneDisplayName } from "../core/zones";
@@ -51,6 +52,7 @@
   const useDemoMode = useSetupMock || searchParams.get("demo") === "1" || window.location.hostname.endsWith(".github.io");
   const useMockApi = useDemoMode || searchParams.get("mock") === "1" || (!deviceBaseUrl && window.location.hostname === "localhost");
   const api: DeviceApi = useMockApi ? mockApi : deviceApi;
+  const floorplanStorageFetcher = useMockApi ? mockFloorplanStorageFetch : undefined;
 
   const zoneTypeLabels: Record<WebZoneType, string> = {
     detection: "탐지",
@@ -510,16 +512,16 @@ onMount(() => {
   async function loadFloorplanBackup(): Promise<BackupFloorplanData | null> {
     let status;
     try {
-      status = await loadFloorplanStorageStatus({ baseUrl: deviceBaseUrl });
+      status = await loadFloorplanStorageStatus({ baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher });
     } catch {
       return null;
     }
     if (!status.hasConfig) return null;
 
-    const document = await loadFloorplanStorageDocument({ baseUrl: deviceBaseUrl });
+    const document = await loadFloorplanStorageDocument({ baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher });
     if (!status.hasImage) return { document };
 
-    const image = await loadFloorplanStorageImage({ baseUrl: deviceBaseUrl });
+    const image = await loadFloorplanStorageImage({ baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher });
     return {
       document,
       image: {
@@ -538,12 +540,12 @@ onMount(() => {
           document: floorplan.document,
           image: base64ToBlob(floorplan.image.dataBase64, floorplan.image.mime)
         },
-        { baseUrl: deviceBaseUrl }
+        { baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher }
       );
       await markFloorplanRestored(true);
       return;
     }
-    await saveFloorplanStorageDocument(floorplan.document, { baseUrl: deviceBaseUrl });
+    await saveFloorplanStorageDocument(floorplan.document, { baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher });
     await markFloorplanRestored(config?.floorplan?.hasImage === true);
   }
 
@@ -593,6 +595,11 @@ onMount(() => {
     }
     return new Blob([bytes], { type: mime });
   }
+
+  function resetDemoStorage(): void {
+    resetMockFloorplanStorage();
+    window.location.reload();
+  }
 </script>
 
 {#if useSetupMock}
@@ -607,6 +614,7 @@ onMount(() => {
     <div class="top-status-group">
       {#if useDemoMode}
         <div class="demo-pill">데모</div>
+        <button class="demo-reset-button" type="button" onclick={resetDemoStorage}>초기화</button>
       {/if}
       <div class="status-pill" data-status data-tone={statusTone}>{statusText}</div>
     </div>
@@ -635,6 +643,7 @@ onMount(() => {
         {controlActionBusy}
         {updatedText}
         floorplanStorageBaseUrl={deviceBaseUrl}
+        {floorplanStorageFetcher}
         onNavigate={(tab) => (activeTab = tab)}
         onSetStatusLed={setStatusLed}
         onSetLedBlinkDuration={setLedBlinkDuration}
@@ -776,6 +785,7 @@ onMount(() => {
         deviceConfig={displayConfig()}
         deviceState={state}
         floorplanStorageBaseUrl={deviceBaseUrl}
+        {floorplanStorageFetcher}
         onUpdateDeviceConfig={(mutator) => updateConfig(mutator)}
         onSaveFloorplan={(document, image) => api.saveFloorplan?.(document, image) ?? Promise.reject(new Error("평면도 저장 API가 준비되지 않았습니다."))}
       />
@@ -805,6 +815,7 @@ onMount(() => {
         {systemStatus}
         systemStatusLoading={systemStatusLoading}
         systemStatusError={systemStatusError}
+        demoMode={useDemoMode}
         issueText={backupRestore.issueText}
         onExport={backupRestore.exportBackup}
         onImportFile={backupRestore.readImportFile}
@@ -813,7 +824,7 @@ onMount(() => {
         onSetImportStats={backupRestore.setImportStats}
         onConfirmImport={backupRestore.confirmImport}
         onCancelImport={backupRestore.cancelImport}
-        onUploadFirmware={api.uploadFirmware}
+        onUploadFirmware={useDemoMode ? undefined : api.uploadFirmware}
       />
     </section>
   {/if}

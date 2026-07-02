@@ -125,6 +125,17 @@ button:disabled {
   font-weight: var(--rz-weight-button);
 }
 
+.demo-reset-button {
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid rgba(228, 87, 87, 0.34);
+  border-radius: 999px;
+  background: rgba(228, 87, 87, 0.12);
+  color: #ffb3b3;
+  font-size: var(--rz-font-help);
+  font-weight: var(--rz-weight-button);
+}
+
 .status-pill {
   flex: 0 0 auto;
   min-width: 82px;
@@ -3470,6 +3481,21 @@ button:disabled {
   line-height: 1.45;
 }
 
+.dashboard-radar-preview {
+  width: min(100%, 900px);
+  display: grid;
+  place-items: center;
+}
+
+.dashboard-radar-preview .radar-scene {
+  width: 100%;
+  max-height: min(58vh, 560px);
+}
+
+.dashboard-radar-preview .svelte-shell-placeholder {
+  width: min(520px, 100%);
+}
+
 .dashboard-floorplan-preview {
   position: relative;
   width: min(100%, 920px);
@@ -3559,6 +3585,50 @@ button:disabled {
   min-width: 96px;
   min-height: 36px;
   padding-inline: 14px;
+}
+
+.demo-blocker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 8, 12, 0.58);
+}
+
+.demo-blocker-dialog {
+  display: grid;
+  width: min(92vw, 420px);
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 107, 122, 0.26);
+  border-radius: 8px;
+  background: rgba(13, 22, 30, 0.96);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+}
+
+.demo-blocker-dialog div {
+  display: grid;
+  gap: 6px;
+}
+
+.demo-blocker-dialog strong {
+  color: #ffd7dd;
+  font-size: var(--rz-font-title-section);
+  font-weight: var(--rz-weight-title);
+}
+
+.demo-blocker-dialog span {
+  color: rgba(255, 215, 221, 0.78);
+  font-size: var(--rz-font-help);
+  line-height: 1.45;
+}
+
+.demo-blocker-dialog button {
+  justify-self: end;
+  min-width: 96px;
+  min-height: 36px;
 }
 
 .backup-empty-state span {
