@@ -48,11 +48,14 @@
   const searchParams = new URLSearchParams(window.location.search);
   const deviceBaseUrl = searchParams.get("device")?.trim() || "";
   const isDemoHost = window.location.hostname === "localhost" || window.location.hostname.endsWith(".github.io");
-  const useSetupMock = searchParams.get("setup") === "1" && isDemoHost;
+  const useSetupMock = (searchParams.get("setup") === "1" && isDemoHost) || window.location.hostname.endsWith(".github.io");
   const useDemoMode = useSetupMock || searchParams.get("demo") === "1" || window.location.hostname.endsWith(".github.io");
   const useMockApi = useDemoMode || searchParams.get("mock") === "1" || (!deviceBaseUrl && window.location.hostname === "localhost");
+  const requiresHaSetupHandoff = searchParams.get("setup") === "1" && !useMockApi;
   const api: DeviceApi = useMockApi ? mockApi : deviceApi;
   const floorplanStorageFetcher = useMockApi ? mockFloorplanStorageFetch : undefined;
+  type IntegrationMode = "unknown" | "edge" | "ha";
+  type HaSetupGateMode = "select" | "edge" | "ha-setup" | "api-warmup" | "api-warning";
 
   const zoneTypeLabels: Record<WebZoneType, string> = {
     detection: "탐지",
@@ -73,6 +76,7 @@
   let statsLoading = $state(false);
   let statsError = $state("");
   let systemStatus = $state<WebSystemStatus | null>(null);
+  let setupMockCompleted = $state(false);
   let systemStatusLoading = $state(false);
   let systemStatusLoaded = $state(false);
   let systemStatusError = $state("");
@@ -81,6 +85,7 @@
   let controlStatusLoaded = $state(false);
   let controlStatusError = $state("");
   let controlActionBusy = $state(false);
+  let integrationModeActionBusy = $state(false);
   let selectedPointIndex = $state(-1);
   let statusText = $state("연결 대기");
   let statusTone = $state<"ok" | "warn" | "error">("warn");
@@ -88,6 +93,12 @@
   let debugMode = $state(false);
   let activeTab = $state<"dashboard" | "zones" | "floorplan" | "stats" | "backup">("dashboard");
   let activeZoneTool = $state<"" | "zones" | "calibration">("");
+  let haSetupGateVisible = $state(requiresHaSetupHandoff);
+  let haSetupGateMode = $state<HaSetupGateMode>(requiresHaSetupHandoff ? "select" : "api-warmup");
+  let haSetupGateBusy = $state(false);
+  let haSetupGateMessage = $state(requiresHaSetupHandoff ? "사용할 연동 방식을 선택하세요." : "초기 연동 상태를 확인합니다.");
+  let haSetupGateDismissed = $state(false);
+  let haSetupGateAllowContinue = $state(false);
 
   const configSave = createConfigSave({
     api,
@@ -264,15 +275,58 @@ onMount(() => {
     }
     systemStatusLoading = true;
     try {
-      systemStatus = await api.getSystemStatus();
+      const nextStatus = await api.getSystemStatus();
+      systemStatus = nextStatus;
       systemStatusLoaded = true;
       systemStatusError = "";
+      updateHaSetupGateFromStatus(nextStatus);
     } catch (error) {
       systemStatusLoaded = true;
       systemStatusError = errorMessage(error);
     } finally {
       systemStatusLoading = false;
     }
+  }
+
+  function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function waitForHaApiReady(maxWaitMs = 30000): Promise<"ready" | "timeout"> {
+    if (!api.getSystemStatus) return "timeout";
+
+    const startedAt = Date.now();
+    let attempt = 0;
+    while (Date.now() - startedAt < maxWaitMs) {
+      attempt += 1;
+      try {
+        const nextStatus = await api.getSystemStatus();
+        systemStatus = nextStatus;
+        systemStatusLoaded = true;
+        systemStatusError = "";
+
+        if (nextStatus.api?.connected) {
+          return "ready";
+        }
+
+        const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        haSetupGateMessage =
+          elapsedSeconds < 8
+            ? "네트워크가 잠시 불안정할 수 있습니다. Home Assistant API 연결 상태를 확인하는 중입니다."
+            : `Home Assistant API 연결을 기다리는 중입니다. ${elapsedSeconds}초 경과`;
+      } catch (error) {
+        systemStatusLoaded = true;
+        systemStatusError = errorMessage(error);
+        haSetupGateMessage =
+          attempt < 4
+            ? "기기가 네트워크를 정리하는 중입니다. 응답을 기다리고 있습니다."
+            : "기기 응답을 기다리는 중입니다. Wi-Fi가 잠시 전환될 수 있습니다.";
+      }
+
+      await wait(1000);
+    }
+
+    return "timeout";
   }
 
   async function refreshControlStatus(): Promise<void> {
@@ -600,10 +654,221 @@ onMount(() => {
     resetMockFloorplanStorage();
     window.location.reload();
   }
+
+  function integrationMode(): IntegrationMode {
+    const mode = config?.integrationMode;
+    return mode === "edge" || mode === "ha" ? mode : "unknown";
+  }
+
+  function updateHaSetupGateFromStatus(status: WebSystemStatus): void {
+    if (useMockApi || requiresHaSetupHandoff || haSetupGateDismissed || haSetupGateVisible || haSetupGateBusy) return;
+    if (!status.api?.warning || status.api?.connected) return;
+    if (!config) return;
+    const mode = integrationMode();
+    if (mode === "edge") return;
+    if (mode === "unknown") {
+      haSetupGateMode = "select";
+      haSetupGateMessage = "사용할 연동 방식을 선택하세요.";
+      haSetupGateAllowContinue = false;
+      haSetupGateVisible = true;
+      return;
+    }
+    const uptimeSeconds = status.firmware?.uptimeSeconds ?? 0;
+    haSetupGateMode = uptimeSeconds < 300 ? "api-warmup" : "api-warning";
+    haSetupGateMessage =
+      haSetupGateMode === "api-warmup"
+        ? "Home Assistant API 연결을 확인하는 중입니다. 이 과정은 약 1분 정도 걸릴 수 있습니다."
+        : "Home Assistant 연결이 아직 확인되지 않습니다. 이미 기기를 추가했다면 네트워크와 Native API 설정을 확인하세요.";
+    haSetupGateAllowContinue = false;
+    haSetupGateVisible = true;
+  }
+
+  function dismissHaSetupGate(): void {
+    haSetupGateVisible = false;
+    haSetupGateBusy = false;
+    haSetupGateDismissed = true;
+    haSetupGateAllowContinue = false;
+  }
+
+  function haSetupGateTitle(): string {
+    if (haSetupGateMode === "select") return "사용 환경을 선택하세요";
+    if (haSetupGateMode === "edge") return "초기 설정을 마무리하는 중";
+    if (haSetupGateMode === "ha-setup") return "Home Assistant 연동 준비";
+    if (haSetupGateMode === "api-warmup") return "Home Assistant 연결 대기 중";
+    return "Home Assistant 연결을 확인하세요";
+  }
+
+  function haSetupGateBody(): string {
+    if (haSetupGateMode === "select") {
+      return "SmartThings Edge만 사용할지, Home Assistant도 함께 사용할지 선택하세요. 나중에 Home Assistant를 사용하게 되면 다시 연동할 수 있습니다.";
+    }
+    if (haSetupGateMode === "edge") {
+      return "초기 설정을 마무리하는 중입니다. Wi-Fi 연결이 잠시 불안정할 수 있습니다.";
+    }
+    if (haSetupGateMode === "ha-setup") {
+      return "확인을 누르면 Home Assistant 연동 준비를 마무리합니다. 연결 확인에는 약 1분 정도 걸릴 수 있습니다.";
+    }
+    if (haSetupGateMode === "api-warmup") {
+      return "Home Assistant 연동 준비가 아직 마무리되지 않았습니다. 확인을 누르면 API 연결 준비를 진행합니다.";
+    }
+    return "Home Assistant 연결이 아직 확인되지 않습니다. 확인을 눌러 API 연결 준비를 다시 진행한 뒤, Home Assistant에서 기기 추가 상태와 API 암호화 키를 확인하세요.";
+  }
+
+  function haSetupGateButtonText(): string {
+    if (haSetupGateAllowContinue) return "대시보드 계속 사용";
+    if (haSetupGateMode === "edge") return haSetupGateBusy ? "마무리 중..." : "대시보드 계속 사용";
+    return haSetupGateBusy ? "연동 준비 중..." : "확인하고 계속";
+  }
+
+  function cleanSetupUrl(): void {
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("setup");
+    window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+  }
+
+  async function saveIntegrationMode(mode: Exclude<IntegrationMode, "unknown">): Promise<void> {
+    const baseConfig =
+      config ??
+      normalizeSoftwareConfig(
+        await api.getConfig().catch(() => ({
+          version: 1,
+          zones: [],
+          calibrationZones: []
+        }))
+      );
+    const nextConfig = normalizeSoftwareConfig({
+      ...baseConfig,
+      integrationMode: mode
+    });
+    config = nextConfig;
+    await api.saveConfig(nextConfig);
+  }
+
+  async function chooseIntegrationMode(mode: Exclude<IntegrationMode, "unknown">): Promise<void> {
+    if (haSetupGateBusy) return;
+    haSetupGateBusy = true;
+    haSetupGateAllowContinue = false;
+    haSetupGateMode = mode === "edge" ? "edge" : "ha-setup";
+    haSetupGateMessage =
+      mode === "edge"
+        ? "초기 설정을 마무리하고 있습니다. Wi-Fi 연결이 잠시 불안정할 수 있습니다."
+        : "Home Assistant 연동 준비를 시작합니다. 연결 확인에는 약 1분 정도 걸릴 수 있습니다.";
+
+    try {
+      await saveIntegrationMode(mode);
+      await runHaSetupHandoff(mode);
+    } catch (error) {
+      haSetupGateMessage = `초기 설정을 마무리하지 못했습니다. ${errorMessage(error)}`;
+      haSetupGateBusy = false;
+      haSetupGateAllowContinue = true;
+    }
+  }
+
+  async function changeIntegrationModeFromDashboard(): Promise<void> {
+    if (integrationModeActionBusy) return;
+    const currentMode = integrationMode();
+    if (currentMode === "unknown") {
+      haSetupGateMode = "select";
+      haSetupGateMessage = "사용할 연동 방식을 선택하세요.";
+      haSetupGateAllowContinue = false;
+      haSetupGateDismissed = false;
+      haSetupGateVisible = true;
+      return;
+    }
+
+    const nextMode: Exclude<IntegrationMode, "unknown"> = currentMode === "edge" ? "ha" : "edge";
+    integrationModeActionBusy = true;
+    try {
+      await saveIntegrationMode(nextMode);
+      if (nextMode === "edge") {
+        dismissHaSetupGate();
+        setStatus("SmartThings Edge 중심으로 사용하도록 설정했습니다.", "ok");
+        return;
+      }
+
+      if (systemStatus?.api?.connected && systemStatus.api.warning === false) {
+        setStatus("Home Assistant도 함께 사용하도록 설정했습니다.", "ok");
+        return;
+      }
+
+      haSetupGateMode = "ha-setup";
+      haSetupGateMessage = "Home Assistant 연동 준비가 필요합니다.";
+      haSetupGateAllowContinue = false;
+      haSetupGateDismissed = false;
+      haSetupGateVisible = true;
+    } catch (error) {
+      setStatus(`사용 환경을 변경하지 못했습니다. ${errorMessage(error)}`, "error");
+    } finally {
+      integrationModeActionBusy = false;
+    }
+  }
+
+  async function runHaSetupHandoff(mode: Exclude<IntegrationMode, "unknown">): Promise<void> {
+    if (!api.completeHaSetupHandoff) {
+      dismissHaSetupGate();
+      return;
+    }
+
+    await api.completeHaSetupHandoff();
+
+    if (mode === "edge") {
+      haSetupGateMessage = "초기 설정 요청을 보냈습니다. 대시보드는 계속 사용할 수 있습니다.";
+      haSetupGateBusy = false;
+      haSetupGateAllowContinue = true;
+      cleanSetupUrl();
+      void refreshSystemStatus();
+      return;
+    }
+
+    haSetupGateMessage = "Home Assistant API 연결 상태를 확인하는 중입니다. 약 1분 정도 걸릴 수 있습니다.";
+    const readyState = await waitForHaApiReady(60000);
+
+    if (readyState !== "ready") {
+      haSetupGateMessage =
+        "기기 설정은 완료되었습니다. Home Assistant 연결 확인에는 최대 1분 정도 걸릴 수 있습니다. 잠시 후 Home Assistant에서 기기 상태를 확인해 주세요.";
+      haSetupGateBusy = false;
+      haSetupGateAllowContinue = true;
+      return;
+    }
+
+    dismissHaSetupGate();
+    haSetupGateMessage = "";
+    cleanSetupUrl();
+    void refreshSystemStatus();
+  }
+
+  async function completeHaSetupHandoff(): Promise<void> {
+    if (haSetupGateBusy) return;
+    if (haSetupGateAllowContinue) {
+      dismissHaSetupGate();
+      return;
+    }
+    if (haSetupGateMode === "select") return;
+    const mode: Exclude<IntegrationMode, "unknown"> = haSetupGateMode === "edge" ? "edge" : "ha";
+    if (!api.completeHaSetupHandoff) {
+      dismissHaSetupGate();
+      return;
+    }
+
+    haSetupGateBusy = true;
+    haSetupGateAllowContinue = false;
+    haSetupGateMessage =
+      mode === "edge"
+        ? "초기 설정을 마무리하고 있습니다. Wi-Fi 연결이 잠시 불안정할 수 있습니다."
+        : "Home Assistant 연동을 위해 네트워크 설정을 마무리하는 중입니다.";
+    try {
+      await saveIntegrationMode(mode);
+      await runHaSetupHandoff(mode);
+    } catch (error) {
+      haSetupGateMessage = `연동 준비를 완료하지 못했습니다. ${errorMessage(error)}`;
+      haSetupGateBusy = false;
+      haSetupGateAllowContinue = true;
+    }
+  }
 </script>
 
-{#if useSetupMock}
-  <SetupMockPanel />
+{#if useSetupMock && !setupMockCompleted}
+  <SetupMockPanel onComplete={() => (setupMockCompleted = true)} />
 {:else}
 <main class="app-shell">
   <header class="top-bar">
@@ -620,6 +885,39 @@ onMount(() => {
     </div>
   </header>
   <div class="toast" data-toast data-visible={errorText ? "true" : "false"}>{errorText}</div>
+
+  {#if haSetupGateVisible}
+    <div class="ha-setup-gate-backdrop" role="dialog" aria-modal="true" aria-labelledby="ha-setup-gate-title">
+      <section class="ha-setup-gate-dialog">
+        <div>
+          <span>Home Assistant 연동</span>
+          <strong id="ha-setup-gate-title">{haSetupGateTitle()}</strong>
+        </div>
+        <p>{haSetupGateBody()}</p>
+        <p>{haSetupGateMessage}</p>
+        {#if haSetupGateMode === "api-warning"}
+          <p class="ha-setup-gate-help">
+            <a href="https://esphome.io/components/api/" target="_blank" rel="noreferrer">ESPHome Native API 문서</a>
+            를 참고해 Home Assistant 연결 상태를 확인하세요.
+          </p>
+        {/if}
+        {#if haSetupGateMode === "select"}
+          <div class="ha-setup-gate-actions">
+            <button type="button" disabled={haSetupGateBusy} onclick={() => chooseIntegrationMode("edge")}>
+              SmartThings Edge만 사용
+            </button>
+            <button type="button" disabled={haSetupGateBusy} onclick={() => chooseIntegrationMode("ha")}>
+              Home Assistant도 사용
+            </button>
+          </div>
+        {:else}
+          <button type="button" disabled={haSetupGateBusy} onclick={completeHaSetupHandoff}>
+            {haSetupGateButtonText()}
+          </button>
+        {/if}
+      </section>
+    </div>
+  {/if}
 
   <nav class="app-tabs" aria-label="Radar configurator sections">
     <button class:active={activeTab === "dashboard"} type="button" onclick={() => (activeTab = "dashboard")}>대시보드</button>
@@ -641,6 +939,8 @@ onMount(() => {
         {controlStatusLoading}
         {controlStatusError}
         {controlActionBusy}
+        integrationMode={integrationMode()}
+        {integrationModeActionBusy}
         {updatedText}
         floorplanStorageBaseUrl={deviceBaseUrl}
         {floorplanStorageFetcher}
@@ -650,6 +950,7 @@ onMount(() => {
         onSetEnvironmentCorrection={setEnvironmentCorrection}
         onSetTemperatureOffset={setTemperatureOffset}
         onSetHumidityOffset={setHumidityOffset}
+        onChangeIntegrationMode={changeIntegrationModeFromDashboard}
       />
     </section>
   {:else if activeTab === "zones"}
@@ -824,7 +1125,11 @@ onMount(() => {
         onSetImportStats={backupRestore.setImportStats}
         onConfirmImport={backupRestore.confirmImport}
         onCancelImport={backupRestore.cancelImport}
+        onGetSystemStatus={useDemoMode ? undefined : api.getSystemStatus}
         onUploadFirmware={useDemoMode ? undefined : api.uploadFirmware}
+        onGetApiKey={useDemoMode ? undefined : api.getApiKey}
+        onResetSystem={useDemoMode ? undefined : api.resetSystem}
+        onRebootSystem={useDemoMode ? undefined : api.rebootSystem}
       />
     </section>
   {/if}

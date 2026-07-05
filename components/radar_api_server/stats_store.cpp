@@ -83,6 +83,13 @@ bool StatsStore::replace_json(const std::string &json) {
   return this->persist_();
 }
 
+void StatsStore::clear() {
+  this->today_json_.clear();
+  this->daily_.clear();
+  this->today_heatmap_cells_.fill(0);
+  this->heatmap_daily_.clear();
+}
+
 std::string StatsStore::current_json() const {
   const std::string today = this->today_json_.empty()
                                 ? "{\"d\":0,\"f\":0,\"r\":0,\"fz\":[0,0,0,0],\"rz\":[0,0,0,0],\"sz\":[0,0,0,0,0,0]}"

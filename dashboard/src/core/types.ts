@@ -124,6 +124,7 @@ export interface WebDeviceState {
 
 export interface WebDeviceConfig {
   version: number;
+  integrationMode?: "unknown" | "edge" | "ha";
   zones: WebZone[];
   calibrationZones?: WebZone[];
   floorplan?: {

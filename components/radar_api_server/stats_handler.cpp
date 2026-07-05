@@ -76,6 +76,11 @@ void StatsHandler::handle_post_stats_(AsyncWebServerRequest *request) {
 }
 
 void StatsHandler::handle_upload_start_(AsyncWebServerRequest *request) {
+  uint32_t session_id = 0;
+  if (!this->parse_upload_session_(request, &session_id)) {
+    http_response::send_error(request, 400, "invalid_session");
+    return;
+  }
   if (!request->hasArg("size")) {
     http_response::send_error(request, 400, "missing_size");
     return;
@@ -87,7 +92,7 @@ void StatsHandler::handle_upload_start_(AsyncWebServerRequest *request) {
     return;
   }
 
-  if (!this->storage_->start_upload(RadarPayloadTarget::STATS, size)) {
+  if (!this->storage_->start_upload(RadarPayloadTarget::STATS, size, session_id)) {
     http_response::send_error(request, 500, "erase_failed");
     return;
   }
@@ -100,6 +105,11 @@ void StatsHandler::handle_upload_chunk_(AsyncWebServerRequest *request) {
     http_response::send_error(request, 400, "missing_chunk");
     return;
   }
+  uint32_t session_id = 0;
+  if (!this->parse_upload_session_(request, &session_id)) {
+    http_response::send_error(request, 400, "invalid_session");
+    return;
+  }
 
   const uint32_t offset = std::strtoul(request->arg("offset").c_str(), nullptr, 10);
   std::string decoded;
@@ -109,7 +119,8 @@ void StatsHandler::handle_upload_chunk_(AsyncWebServerRequest *request) {
   }
 
   if (!this->storage_->write_upload_chunk(RadarPayloadTarget::STATS, offset,
-                                          reinterpret_cast<const uint8_t *>(decoded.data()), decoded.size())) {
+                                          reinterpret_cast<const uint8_t *>(decoded.data()), decoded.size(),
+                                          session_id)) {
     http_response::send_error(request, 500, "chunk_write_failed");
     return;
   }
@@ -118,13 +129,29 @@ void StatsHandler::handle_upload_chunk_(AsyncWebServerRequest *request) {
 }
 
 void StatsHandler::handle_upload_commit_(AsyncWebServerRequest *request) {
-  if (!this->storage_->commit_upload(RadarPayloadTarget::STATS)) {
+  uint32_t session_id = 0;
+  if (!this->parse_upload_session_(request, &session_id)) {
+    http_response::send_error(request, 400, "invalid_session");
+    return;
+  }
+
+  if (!this->storage_->commit_upload(RadarPayloadTarget::STATS, session_id)) {
     http_response::send_error(request, 409, "upload_incomplete");
     return;
   }
 
   this->stats_store_->load(this->storage_);
   http_response::send_json(request, 200, R"({"ok":true})");
+}
+
+bool StatsHandler::parse_upload_session_(AsyncWebServerRequest *request, uint32_t *session_id) const {
+  if (!request->hasArg("session"))
+    return false;
+  const uint32_t parsed = std::strtoul(request->arg("session").c_str(), nullptr, 0);
+  if (parsed == 0)
+    return false;
+  *session_id = parsed;
+  return true;
 }
 
 bool StatsHandler::decode_hex_(const std::string &hex, std::string *out) const {

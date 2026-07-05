@@ -9,7 +9,10 @@ export interface DeviceApi {
   getConfig(): Promise<WebDeviceConfig>;
   getStats(): Promise<WebDeviceStats>;
   getSystemStatus?(): Promise<WebSystemStatus>;
+  getApiKey?(): Promise<WebApiKeyResult>;
+  completeHaSetupHandoff?(): Promise<WebHaSetupHandoffResult>;
   getControlStatus?(): Promise<WebControlStatus>;
+  rebootSystem?(): Promise<WebSystemRebootResult>;
   saveConfig(config: WebDeviceConfig): Promise<void>;
   saveStats(stats: WebDeviceStats, onProgress?: (progress: FirmwareUploadProgress) => void): Promise<void>;
   setStatusLed?(enabled: boolean): Promise<void>;
@@ -19,6 +22,19 @@ export interface DeviceApi {
   setHumidityOffset?(value: number): Promise<void>;
   saveFloorplan?(document: FloorplanStorageDocument, image: Blob): Promise<void>;
   uploadFirmware?(file: File, onProgress: (progress: FirmwareUploadProgress) => void): Promise<void>;
+  resetSystem?(options: WebSystemResetOptions): Promise<WebSystemResetResult>;
+}
+
+export interface WebApiKeyResult {
+  ok: boolean;
+  apiKey: string;
+  visibleSeconds?: number;
+}
+
+export interface WebHaSetupHandoffResult {
+  ok: boolean;
+  message?: string;
+  waitSeconds?: number;
 }
 
 export interface FirmwareUploadProgress {
@@ -47,6 +63,14 @@ export interface WebSystemStatus {
     version?: string;
     buildTime?: string;
     uptimeSeconds?: number;
+  };
+  api?: {
+    connected?: boolean;
+    warning?: boolean;
+  };
+  boot?: {
+    initialGuardActive?: boolean;
+    guardSeconds?: number;
   };
   dashboard?: {
     version?: string;
@@ -96,6 +120,37 @@ export interface WebSystemStatus {
     enabled?: boolean;
     connected?: boolean;
   };
+}
+
+export interface WebSystemResetOptions {
+  settings: boolean;
+  wifi: boolean;
+  stats: boolean;
+}
+
+export interface WebSystemResetResult {
+  ok: boolean;
+  reset?: {
+    settings?: boolean;
+    wifi?: boolean;
+    stats?: boolean;
+  };
+  details?: {
+    apiKey?: boolean;
+    floorplan?: boolean;
+    deviceConfig?: boolean;
+    stats?: boolean;
+    wifiScheduled?: boolean;
+  };
+  rebootRequired?: boolean;
+  rebootInMs?: number;
+  error?: string;
+  message?: string;
+}
+
+export interface WebSystemRebootResult {
+  ok: boolean;
+  rebootInMs?: number;
 }
 
 export type SaveState = "idle" | "pending" | "saving" | "queued" | "saved" | "error";

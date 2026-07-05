@@ -1,6 +1,16 @@
 import { saveFloorplanStorage } from "../floorplan/floorplan-storage-client";
 import type { WebDeviceConfig, WebDeviceState, WebDeviceStats } from "../../core/types";
-import type { DeviceApi, FirmwareUploadProgress, WebControlStatus, WebSystemStatus } from "../types";
+import type {
+  DeviceApi,
+  FirmwareUploadProgress,
+  WebApiKeyResult,
+  WebControlStatus,
+  WebHaSetupHandoffResult,
+  WebSystemRebootResult,
+  WebSystemResetOptions,
+  WebSystemResetResult,
+  WebSystemStatus
+} from "../types";
 
 const deviceBaseUrl = normalizeDeviceBaseUrl(new URLSearchParams(window.location.search).get("device") || "");
 const UPLOAD_CHUNK_BYTES = 192;
@@ -53,19 +63,33 @@ async function postJsonData(url: string, value: unknown): Promise<void> {
   });
 }
 
+async function postJsonRequest<T>(url: string, value: unknown): Promise<T> {
+  return requestJson<T>(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({
+      data: JSON.stringify(value)
+    })
+  });
+}
+
 async function uploadJsonPayload(
   paths: { start: string; chunk: string; commit: string },
   value: unknown,
   onProgress?: (progress: FirmwareUploadProgress) => void
 ): Promise<void> {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const session = createUploadSessionId();
   onProgress?.({ loaded: 0, total: bytes.byteLength, percent: 0 });
 
-  await postForm(paths.start, { size: String(bytes.byteLength) });
+  await postForm(paths.start, { session, size: String(bytes.byteLength) });
 
   for (let offset = 0; offset < bytes.byteLength; offset += UPLOAD_CHUNK_BYTES) {
     const chunk = bytes.subarray(offset, Math.min(offset + UPLOAD_CHUNK_BYTES, bytes.byteLength));
     await postForm(paths.chunk, {
+      session,
       offset: String(offset),
       data: bytesToHex(chunk)
     });
@@ -77,7 +101,7 @@ async function uploadJsonPayload(
     });
   }
 
-  await postForm(paths.commit, {});
+  await postForm(paths.commit, { session });
   onProgress?.({ loaded: bytes.byteLength, total: bytes.byteLength, percent: 100 });
 }
 
@@ -97,6 +121,15 @@ function bytesToHex(bytes: Uint8Array): string {
     hex += byte.toString(16).padStart(2, "0");
   }
   return hex;
+}
+
+function createUploadSessionId(): string {
+  const values = new Uint32Array(1);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(values);
+  }
+  const fallback = (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+  return String(values[0] || fallback || 1);
 }
 
 async function responseErrorText(response: Response): Promise<string> {
@@ -154,6 +187,7 @@ interface StoredStatsFile extends Partial<WebDeviceStats> {
 function emptyDeviceConfig(): WebDeviceConfig {
   return {
     version: 1,
+    integrationMode: "unknown",
     zones: [],
     calibrationZones: [],
     floorplan: {
@@ -251,5 +285,21 @@ export const deviceApi: DeviceApi = {
 
   async uploadFirmware(file, onProgress): Promise<void> {
     await uploadFirmwareFile(file, onProgress);
+  },
+
+  async resetSystem(options: WebSystemResetOptions): Promise<WebSystemResetResult> {
+    return postJsonRequest<WebSystemResetResult>("/api/system/reset", options);
+  },
+
+  async rebootSystem(): Promise<WebSystemRebootResult> {
+    return postJsonRequest<WebSystemRebootResult>("/api/system/reboot", {});
+  },
+
+  async getApiKey(): Promise<WebApiKeyResult> {
+    return requestJson<WebApiKeyResult>("/api/system/api-key", { cache: "no-store" });
+  },
+
+  async completeHaSetupHandoff(): Promise<WebHaSetupHandoffResult> {
+    return postJsonRequest<WebHaSetupHandoffResult>("/api/system/ha-setup-handoff", {});
   }
 };

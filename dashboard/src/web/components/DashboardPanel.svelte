@@ -11,6 +11,7 @@
   import type { WebControlStatus, WebDeviceConfig, WebDeviceState, WebSystemStatus } from "../types";
 
   type TabTarget = "zones" | "floorplan" | "stats" | "backup";
+  type IntegrationMode = "unknown" | "edge" | "ha";
 
   type Props = {
     config: WebDeviceConfig | null;
@@ -22,6 +23,8 @@
     controlStatusLoading: boolean;
     controlStatusError: string;
     controlActionBusy: boolean;
+    integrationMode: IntegrationMode;
+    integrationModeActionBusy: boolean;
     updatedText: string;
     floorplanStorageBaseUrl: string;
     floorplanStorageFetcher?: typeof fetch;
@@ -31,6 +34,7 @@
     onSetEnvironmentCorrection: (enabled: boolean) => void | Promise<void>;
     onSetTemperatureOffset: (value: number) => void | Promise<void>;
     onSetHumidityOffset: (value: number) => void | Promise<void>;
+    onChangeIntegrationMode: () => void | Promise<void>;
   };
 
   let {
@@ -43,6 +47,8 @@
     controlStatusLoading,
     controlStatusError,
     controlActionBusy,
+    integrationMode,
+    integrationModeActionBusy,
     updatedText,
     floorplanStorageBaseUrl,
     floorplanStorageFetcher,
@@ -51,7 +57,8 @@
     onSetLedBlinkDuration,
     onSetEnvironmentCorrection,
     onSetTemperatureOffset,
-    onSetHumidityOffset
+    onSetHumidityOffset,
+    onChangeIntegrationMode
   }: Props = $props();
 
   let tuningOpen = $state(false);
@@ -70,6 +77,9 @@
   const filterZoneCount = $derived(config?.zones.filter((zone) => zone.type === "filter").length ?? 0);
   const reducedZoneCount = $derived(config?.zones.filter((zone) => zone.type === "reduced").length ?? 0);
   const disabledZoneCount = $derived(config?.zones.filter((zone) => zone.type === "disabled").length ?? 0);
+  const integrationModeButtonText = $derived(
+    integrationMode === "edge" ? "HA 모드로" : integrationMode === "ha" ? "Edge 모드로" : "사용 환경 선택"
+  );
 
   function yesNo(value: boolean | undefined): string {
     return value ? "감지됨" : "감지 없음";
@@ -554,6 +564,9 @@
           <div class="dashboard-tuning-actions">
             <button type="button" disabled={controlActionBusy} onclick={() => (environmentDialogOpen = true)}>온습도 보정</button>
             <button type="button" disabled={controlActionBusy} onclick={() => (ledDialogOpen = true)}>Status LED 제어</button>
+            <button type="button" disabled={integrationModeActionBusy} onclick={onChangeIntegrationMode}>
+              {integrationModeActionBusy ? "변경 중..." : integrationModeButtonText}
+            </button>
           </div>
         </div>
       {/if}

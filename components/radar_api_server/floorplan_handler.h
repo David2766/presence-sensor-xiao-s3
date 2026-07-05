@@ -29,6 +29,7 @@ class FloorplanHandler {
   void handle_delete_storage_(AsyncWebServerRequest *request);
 
   bool parse_floorplan_target_(AsyncWebServerRequest *request, RadarPayloadTarget *target) const;
+  bool parse_upload_session_(AsyncWebServerRequest *request, uint32_t *session_id) const;
   bool decode_hex_(const std::string &hex, std::string *out) const;
 };
 

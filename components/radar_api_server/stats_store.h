@@ -18,6 +18,7 @@ class StatsStore {
   void record_heatmap_hit(float tx, float ty);
   bool finish_day(const std::string &finished_day_json, const std::string &new_today_json);
   bool replace_json(const std::string &json);
+  void clear();
 
   std::string current_json() const;
 

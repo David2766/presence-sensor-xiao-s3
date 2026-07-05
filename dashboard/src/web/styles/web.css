@@ -188,6 +188,75 @@ button:disabled {
   transform: translate(-50%, 0);
 }
 
+.ha-setup-gate-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(6, 10, 15, 0.76);
+  backdrop-filter: blur(4px);
+}
+
+.ha-setup-gate-dialog {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid rgba(255, 209, 102, 0.34);
+  border-radius: 8px;
+  background: #17222c;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+}
+
+.ha-setup-gate-dialog div {
+  display: grid;
+  gap: 5px;
+}
+
+.ha-setup-gate-dialog span {
+  color: #ffe4a3;
+  font-size: var(--rz-font-help);
+  font-weight: var(--rz-weight-button);
+}
+
+.ha-setup-gate-dialog strong {
+  color: #f6fbff;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.ha-setup-gate-dialog p {
+  margin: 0;
+  color: rgba(215, 238, 252, 0.76);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ha-setup-gate-dialog .ha-setup-gate-help {
+  color: rgba(255, 228, 163, 0.82);
+}
+
+.ha-setup-gate-dialog a {
+  color: #7de2c8;
+  font-weight: var(--rz-weight-button);
+}
+
+.ha-setup-gate-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ha-setup-gate-dialog button {
+  min-height: 42px;
+  margin-top: 2px;
+  border-color: rgba(25, 179, 148, 0.46);
+  background: #19b394;
+  color: #07110f;
+}
+
 .app-tabs {
   display: flex;
   gap: 8px;
@@ -3291,6 +3360,46 @@ button:disabled {
   background: linear-gradient(90deg, transparent, rgba(123, 184, 216, 0.3), transparent);
 }
 
+.danger-zone-row {
+  --rz-danger-zone-line: rgba(255, 107, 122, 0.34);
+  --rz-danger-zone-bg: rgba(255, 107, 122, 0.07);
+}
+
+.danger-zone-card {
+  border-color: var(--rz-danger-zone-line);
+  background: linear-gradient(180deg, rgba(255, 107, 122, 0.08), rgba(14, 21, 28, 0.94));
+}
+
+.danger-zone-card > div:first-child strong {
+  color: #ffd7dd;
+}
+
+.danger-zone-tools {
+  grid-template-columns: 1fr 1fr;
+}
+
+.danger-reset-options {
+  gap: 10px;
+}
+
+.danger-reset-options .danger-button {
+  width: 100%;
+}
+
+.api-key-value {
+  display: block;
+  max-width: 100%;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.28);
+  color: #d7eefc;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .backup-empty-state {
   min-height: 120px;
   align-content: center;
@@ -3608,7 +3717,7 @@ button:disabled {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
 }
 
-.demo-blocker-dialog div {
+.demo-blocker-dialog > div:not(.demo-blocker-actions) {
   display: grid;
   gap: 6px;
 }
@@ -3629,6 +3738,16 @@ button:disabled {
   justify-self: end;
   min-width: 96px;
   min-height: 36px;
+}
+
+.demo-blocker-dialog .demo-blocker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.demo-blocker-dialog .demo-blocker-actions button {
+  justify-self: auto;
 }
 
 .backup-empty-state span {

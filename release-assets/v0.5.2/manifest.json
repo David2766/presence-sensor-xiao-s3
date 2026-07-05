@@ -1,0 +1,9 @@
+{
+  "name": "Presence Sensor XIAO S3",
+  "version": "0.5.2",
+  "firmware": [
+    "presence-sensor-xiao-s3-v0.5.2-factory.bin",
+    "presence-sensor-xiao-s3-v0.5.2-ota.bin"
+  ],
+  "checksums": "checksums.txt"
+}

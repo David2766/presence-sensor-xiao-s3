@@ -17,19 +17,14 @@ psram:
 logger:
   level: INFO
 api:
-  encryption:
-    key: !secret api_encryption_key
+  encryption: {}
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
   output_power: 8.5dB
   
   # Fallback AP for initial setup
   ap:
-    password: !secret ap_password
-
-# Captive portal for fallback AP mode
-captive_portal:
+    password: "psensor7777"
+    ap_timeout: 0s
 
 # Wi-Fi provisioning support
 esp32_improv:

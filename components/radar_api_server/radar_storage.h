@@ -44,9 +44,11 @@ class RadarStorage {
 
   bool read_payload(RadarPayloadTarget target, std::string *out);
   bool write_payload(RadarPayloadTarget target, const uint8_t *data, uint32_t size);
-  bool start_upload(RadarPayloadTarget target, uint32_t size);
-  bool write_upload_chunk(RadarPayloadTarget target, uint32_t offset, const uint8_t *data, uint32_t size);
-  bool commit_upload(RadarPayloadTarget target);
+  bool start_upload(RadarPayloadTarget target, uint32_t size, uint32_t session_id);
+  bool write_upload_chunk(RadarPayloadTarget target, uint32_t offset, const uint8_t *data, uint32_t size,
+                          uint32_t session_id);
+  bool commit_upload(RadarPayloadTarget target, uint32_t session_id);
+  bool delete_payload(RadarPayloadTarget target);
   bool delete_floorplan();
   bool delete_all();
 

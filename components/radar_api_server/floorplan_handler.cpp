@@ -4,6 +4,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <esp_http_server.h>
 
 namespace esphome {
 namespace radar_api_server {
@@ -103,12 +104,12 @@ void FloorplanHandler::handle_get_payload_(AsyncWebServerRequest *request, Radar
     return;
   }
 
-  auto *response = request->beginResponse(200, content_type, data);
-  if (response == nullptr) {
+  httpd_resp_set_type(*request, content_type);
+  httpd_resp_set_hdr(*request, "Access-Control-Allow-Origin", "*");
+  if (httpd_resp_send(*request, data.data(), data.size()) != ESP_OK) {
     http_response::send_error(request, 500, read_error);
     return;
   }
-  request->send(response);
 }
 
 void FloorplanHandler::handle_post_payload_(AsyncWebServerRequest *request, RadarPayloadTarget target,
@@ -154,6 +155,11 @@ void FloorplanHandler::handle_upload_start_(AsyncWebServerRequest *request) {
     http_response::send_error(request, 400, "invalid_target");
     return;
   }
+  uint32_t session_id = 0;
+  if (!this->parse_upload_session_(request, &session_id)) {
+    http_response::send_error(request, 400, "invalid_session");
+    return;
+  }
   if (!request->hasArg("size")) {
     http_response::send_error(request, 400, "missing_size");
     return;
@@ -165,7 +171,7 @@ void FloorplanHandler::handle_upload_start_(AsyncWebServerRequest *request) {
     return;
   }
 
-  if (!this->storage_->start_upload(target, size)) {
+  if (!this->storage_->start_upload(target, size, session_id)) {
     http_response::send_error(request, 500, "erase_failed");
     return;
   }
@@ -183,6 +189,11 @@ void FloorplanHandler::handle_upload_chunk_(AsyncWebServerRequest *request) {
     http_response::send_error(request, 400, "missing_chunk");
     return;
   }
+  uint32_t session_id = 0;
+  if (!this->parse_upload_session_(request, &session_id)) {
+    http_response::send_error(request, 400, "invalid_session");
+    return;
+  }
 
   const uint32_t offset = std::strtoul(request->arg("offset").c_str(), nullptr, 10);
   std::string decoded;
@@ -192,7 +203,7 @@ void FloorplanHandler::handle_upload_chunk_(AsyncWebServerRequest *request) {
   }
 
   if (!this->storage_->write_upload_chunk(target, offset, reinterpret_cast<const uint8_t *>(decoded.data()),
-                                          decoded.size())) {
+                                          decoded.size(), session_id)) {
     http_response::send_error(request, 500, "chunk_write_failed");
     return;
   }
@@ -206,8 +217,13 @@ void FloorplanHandler::handle_upload_commit_(AsyncWebServerRequest *request) {
     http_response::send_error(request, 400, "invalid_target");
     return;
   }
+  uint32_t session_id = 0;
+  if (!this->parse_upload_session_(request, &session_id)) {
+    http_response::send_error(request, 400, "invalid_session");
+    return;
+  }
 
-  if (!this->storage_->commit_upload(target)) {
+  if (!this->storage_->commit_upload(target, session_id)) {
     http_response::send_error(request, 409, "upload_incomplete");
     return;
   }
@@ -233,6 +249,16 @@ bool FloorplanHandler::parse_floorplan_target_(AsyncWebServerRequest *request, R
   if (!request->hasArg("target") || !this->storage_->parse_target(request->arg("target"), target))
     return false;
   return *target == RadarPayloadTarget::CONFIG || *target == RadarPayloadTarget::IMAGE;
+}
+
+bool FloorplanHandler::parse_upload_session_(AsyncWebServerRequest *request, uint32_t *session_id) const {
+  if (!request->hasArg("session"))
+    return false;
+  const uint32_t parsed = std::strtoul(request->arg("session").c_str(), nullptr, 0);
+  if (parsed == 0)
+    return false;
+  *session_id = parsed;
+  return true;
 }
 
 bool FloorplanHandler::decode_hex_(const std::string &hex, std::string *out) const {

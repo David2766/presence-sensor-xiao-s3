@@ -105,7 +105,9 @@ async function uploadPayload(
   bytes: Uint8Array,
   options: FloorplanStorageClientOptions
 ): Promise<void> {
+  const session = createUploadSessionId();
   await postForm(FLOORPLAN_UPLOAD_START_API_PATH, options, {
+    session,
     target,
     size: String(bytes.byteLength)
   });
@@ -113,13 +115,14 @@ async function uploadPayload(
   for (let offset = 0; offset < bytes.byteLength; offset += UPLOAD_CHUNK_BYTES) {
     const chunk = bytes.subarray(offset, Math.min(offset + UPLOAD_CHUNK_BYTES, bytes.byteLength));
     await postForm(FLOORPLAN_UPLOAD_CHUNK_API_PATH, options, {
+      session,
       target,
       offset: String(offset),
       data: bytesToHex(chunk)
     });
   }
 
-  await postForm(FLOORPLAN_UPLOAD_COMMIT_API_PATH, options, { target });
+  await postForm(FLOORPLAN_UPLOAD_COMMIT_API_PATH, options, { session, target });
 }
 
 async function blobToBytes(blob: Blob): Promise<Uint8Array> {
@@ -136,6 +139,15 @@ function bytesToHex(bytes: Uint8Array): string {
     hex += byte.toString(16).padStart(2, "0");
   }
   return hex;
+}
+
+function createUploadSessionId(): string {
+  const values = new Uint32Array(1);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(values);
+  }
+  const fallback = (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+  return String(values[0] || fallback || 1);
 }
 
 async function request(path: string, options: FloorplanStorageClientOptions, init?: RequestInit): Promise<Response> {

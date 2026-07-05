@@ -18,12 +18,15 @@ void RadarApiServer::setup() {
   }
   this->stats_store_.load(&this->storage_);
   this->base_->add_handler(this);
+  this->set_timeout("setup_prepare_access_point", 30 * 1000, [this]() {
+    this->setup_handler_.prepare_setup_access_point();
+  });
 }
 
 void RadarApiServer::dump_config() {
   ESP_LOGCONFIG(TAG, "Radar API Server:");
   ESP_LOGCONFIG(TAG, "  Setup: /setup");
-  ESP_LOGCONFIG(TAG, "  Setup API: GET /api/setup/status|networks, POST /api/setup/wifi");
+  ESP_LOGCONFIG(TAG, "  Setup API: GET /api/setup/status|networks, POST /api/setup/prepare|apply-wifi|finish");
   ESP_LOGCONFIG(TAG, "  Dashboard: /dashboard");
   ESP_LOGCONFIG(TAG, "  Floorplan Status API: /api/floorplan/status");
   ESP_LOGCONFIG(TAG, "  Floorplan Config API: GET/POST /api/floorplan");
@@ -33,7 +36,7 @@ void RadarApiServer::dump_config() {
   ESP_LOGCONFIG(TAG, "  State API: GET /api/state");
   ESP_LOGCONFIG(TAG, "  Stats API: GET/POST /api/stats");
   ESP_LOGCONFIG(TAG, "  Stats Upload API: POST /api/stats/upload/start|chunk|commit");
-  ESP_LOGCONFIG(TAG, "  System Status API: /api/system/status");
+  ESP_LOGCONFIG(TAG, "  System API: GET /api/system/status, POST /api/system/reset");
   ESP_LOGCONFIG(TAG, "  Control Status API: GET /api/control/status");
   ESP_LOGCONFIG(TAG, "  Control API: POST /api/control/status-led|led-duration");
   ESP_LOGCONFIG(TAG, "  Floorplan Upload API: POST /api/floorplan/upload/start|chunk|commit");

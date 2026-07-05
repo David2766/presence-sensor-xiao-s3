@@ -13,8 +13,10 @@
 #include "stats_handler.h"
 #include "system_handler.h"
 #include "esphome/core/component.h"
-#include "esphome/components/wifi/wifi_component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
+
+#include <functional>
+#include <string>
 
 namespace esphome {
 namespace radar_api_server {
@@ -23,7 +25,8 @@ class RadarApiServer : public Component, public AsyncWebHandler {
  public:
   explicit RadarApiServer(web_server_base::WebServerBase *base)
       : base_(base), floorplan_handler_(&storage_), device_config_handler_(&storage_, &device_config_cache_),
-        stats_handler_(&stats_store_, &storage_), system_handler_(&storage_), state_handler_(&state_json_),
+        stats_handler_(&stats_store_, &storage_), system_handler_(&storage_, &device_config_cache_, &stats_store_, this),
+        state_handler_(&state_json_),
         control_handler_(&control_state_), setup_handler_(this) {}
 
   void setup() override;
@@ -45,9 +48,21 @@ class RadarApiServer : public Component, public AsyncWebHandler {
     return this->stats_store_.finish_day(finished_day_json, new_today_json);
   }
   void update_state_json(const std::string &json) { this->state_json_ = json; }
-  void save_wifi_sta_deferred(std::string ssid, std::string password) {
-    this->defer([ssid, password]() { wifi::global_wifi_component->save_wifi_sta(ssid.c_str(), password.c_str()); });
-  }
+
+  // Setup Wi-Fi uses ESP-IDF directly so provisioning can keep the setup AP alive
+  // while validating the selected STA network. ESPHome is synced only at finish/handoff.
+  void connect_setup_wifi_deferred(std::string ssid, std::string password);
+  void pause_setup_sta_deferred();
+  void close_setup_ap_deferred();
+  void close_setup_ap_after(uint32_t delay_ms, std::function<void()> before_close = {});
+  void finish_setup_scan_after(uint32_t delay_ms);
+  void finish_setup_scan_and_open_ap_after(uint32_t delay_ms);
+  void open_setup_ap_deferred();
+  void schedule_setup_auto_reboot();
+  void reboot_deferred();
+  void reboot_after(uint32_t delay_ms);
+  void handoff_wifi_to_esphome_after(uint32_t delay_ms);
+  void reset_wifi_credentials_and_reboot_after(uint32_t delay_ms);
   void update_control_status(bool status_led_enabled, float led_blink_duration, bool environment_correction_enabled,
                              float temperature_offset, float humidity_offset) {
     this->control_state_.status_led_enabled = status_led_enabled;
@@ -112,6 +127,7 @@ class RadarApiServer : public Component, public AsyncWebHandler {
   StateHandler state_handler_;
   ControlHandler control_handler_;
   SetupHandler setup_handler_;
+  bool ha_setup_handoff_started_{false};
 };
 
 }  // namespace radar_api_server

@@ -109,6 +109,7 @@ function createDemoStats(): WebDeviceStats {
 
 let config: WebDeviceConfig = {
   version: 1,
+  integrationMode: "unknown",
   zones: [
     {
       id: "zone_1",
@@ -199,6 +200,14 @@ export const mockApi: DeviceApi = {
         version: "0.4.0",
         buildTime: "mock",
         uptimeSeconds: Math.round((Date.now() - startTime) / 1000)
+      },
+      api: {
+        connected: true,
+        warning: false
+      },
+      boot: {
+        initialGuardActive: Math.round((Date.now() - startTime) / 1000) < 60,
+        guardSeconds: 60
       },
       dashboard: {
         version: "0.4.0",
@@ -310,5 +319,53 @@ export const mockApi: DeviceApi = {
         percent: Math.round((loaded / total) * 100)
       });
     }
+  },
+
+  async resetSystem(options) {
+    if (options.settings) {
+      config = {
+        version: 1,
+        integrationMode: "unknown",
+        zones: [],
+        calibrationZones: [],
+        floorplan: {
+          enabled: false,
+          hasImage: false
+        }
+      };
+      statusLedEnabled = true;
+      ledBlinkDuration = 60;
+      environmentCorrectionEnabled = true;
+      temperatureOffset = 0;
+      humidityOffset = 0;
+    }
+    if (options.stats) {
+      stats = createDemoStats();
+    }
+    return {
+      ok: true,
+      reset: {
+        settings: options.settings,
+        wifi: options.wifi,
+        stats: options.stats
+      },
+      rebootRequired: options.settings || options.wifi,
+      rebootInMs: options.settings || options.wifi ? 2500 : 0
+    };
+  },
+
+  async rebootSystem() {
+    return {
+      ok: true,
+      rebootInMs: 2500
+    };
+  },
+
+  async completeHaSetupHandoff() {
+    return {
+      ok: true,
+      message: "mock_handoff_started",
+      waitSeconds: 1
+    };
   }
 };

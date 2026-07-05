@@ -12,7 +12,6 @@ secrets.yaml
 **/coverage/
 **/playwright-report/
 **/test-results/
-release-assets/
 **/.pio/
 **/.pioenvs/
 **/.piolibdeps/
@@ -25,3 +24,4 @@ release-assets/
 *.bak
 .DS_Store
 Thumbs.db
+!release-assets/**/*.bin

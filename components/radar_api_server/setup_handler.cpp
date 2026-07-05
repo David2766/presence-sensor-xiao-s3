@@ -1,19 +1,43 @@
 #include "setup_handler.h"
 
 #include "radar_api_server.h"
+#include "setup_page.h"
+#include "setup_security.h"
+#include "setup_wifi_manager.h"
 
+#include "esphome/components/api/api_server.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
-#include <algorithm>
 #include <cstdio>
 #include <string>
-#include <vector>
 
 namespace esphome {
 namespace radar_api_server {
+
+void SetupHandler::begin_setup_session_() const {
+  const auto before = setup_wifi_stage;
+  bool should_open_ap = false;
+  if (setup_wifi_stage == SetupWifiStage::IDLE) {
+    reset_setup_wifi_state_();
+    setup_wifi_stage = SetupWifiStage::READY;
+    should_open_ap = true;
+  }
+  if (before != setup_wifi_stage) {
+    ESP_LOGD("radar_setup", "setup: begin_setup_session stage=%s->%s",
+             setup_wifi_stage_to_string(before), setup_wifi_stage_to_string(setup_wifi_stage));
+  }
+  ensure_setup_wifi_events_registered();
+  if (should_open_ap) {
+    const bool connected = wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected();
+    if (!connected) {
+      this->server_->pause_setup_sta_deferred();
+    }
+    this->server_->open_setup_ap_deferred();
+  }
+}
 
 namespace {
 
@@ -47,89 +71,58 @@ std::string json_escape(const char *value) {
 
 std::string json_escape(const std::string &value) { return json_escape(value.c_str()); }
 
-bool wifi_connected() {
-  return wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected();
-}
-
-bool setup_mode_active() {
-  return wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_ap_active() && !wifi_connected();
-}
-
-struct NetworkInfo {
-  std::string ssid;
-  int rssi{0};
-  bool locked{false};
-};
-
-const char SETUP_PAGE[] PROGMEM = R"HTML(<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Presence Sensor 설정</title>
-<style>
-:root{color-scheme:dark;--bg:#0b1117;--panel:#101923;--panel2:#152330;--text:#e8f0f6;--muted:#91a4b5;--line:#263849;--accent:#19b394;--danger:#e45757}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;min-height:100dvh;background:linear-gradient(180deg,#0b1117,#0e161e);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);display:flex;align-items:center;justify-content:center;padding:clamp(14px,4vw,28px)}
-.wrap{width:min(520px,100%)}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 18px 50px rgba(0,0,0,.35)}
-.eyebrow{font-size:13px;color:var(--accent);font-weight:700;margin:0 0 8px}.title{font-size:25px;line-height:1.2;font-weight:800;margin:0 0 8px}.desc{font-size:14px;line-height:1.55;color:var(--muted);margin:0 0 18px}
-.notice{margin:0 0 16px;padding:12px 13px;border:1px solid rgba(25,179,148,.28);border-radius:12px;background:rgba(25,179,148,.08);color:#b8f1e4;font-size:13px;line-height:1.45}
-.status{display:grid;grid-template-columns:1fr auto;gap:8px 14px;margin:0 0 18px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#0d151d}.status span{font-size:13px;color:var(--muted)}.status b{font-size:13px;text-align:right}
-label{display:block;font-size:13px;color:var(--muted);margin:14px 0 7px}.networks{display:grid;gap:8px;margin:8px 0 8px;max-height:36dvh;overflow-y:auto;overflow-x:hidden;padding-right:2px}.net{width:100%;max-width:100%;min-width:0;min-height:50px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;text-align:left;font:inherit}.net span{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.net.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}.net small{color:var(--muted);flex:0 0 auto;white-space:nowrap}.net-more{display:none;width:100%;max-width:100%;height:42px;margin:0 0 12px;border:1px dashed var(--line);border-radius:12px;background:transparent;color:var(--accent);font:inherit;font-weight:750}.net-more.visible{display:block}
-input{width:100%;height:46px;border-radius:12px;border:1px solid var(--line);background:#0d151d;color:var(--text);padding:0 13px;font-size:16px}input:focus{outline:2px solid rgba(25,179,148,.35);border-color:var(--accent)}
-.actions{display:flex;gap:10px;margin-top:16px}.btn{border:0;border-radius:12px;height:46px;padding:0 16px;font-size:15px;font-weight:750;color:#07110f;background:var(--accent);flex:1}.btn.secondary{background:#1a2a38;color:var(--text);border:1px solid var(--line);flex:0 0 auto}.btn:disabled{opacity:.55}
-.message{min-height:22px;margin-top:13px;font-size:14px;color:var(--muted);line-height:1.45}.message.error{color:#ff9b9b}.message.ok{color:#7de2c8}
-@media (min-width:641px) and (max-width:1024px){.wrap{width:min(560px,100%)}.card{padding:24px}.networks{max-height:42dvh}}
-@media (max-width:640px){body{align-items:flex-start;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}.wrap{width:100%}.card{border-radius:14px;padding:16px;box-shadow:0 10px 28px rgba(0,0,0,.28)}.title{font-size:22px}.desc{font-size:13px;margin-bottom:14px}.notice{font-size:12.5px;padding:11px 12px}.status{grid-template-columns:minmax(0,1fr) auto;padding:12px;gap:7px 10px}.status b{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.networks{max-height:34dvh}.net{min-height:54px;padding:13px 12px}.net small{font-size:12px}.net-more{height:46px}.actions{flex-direction:column-reverse}.btn,.btn.secondary{width:100%;flex:0 0 auto;height:48px}.message{font-size:13px}}
-</style>
-</head>
-<body>
-<main class="wrap">
-  <section class="card">
-    <p class="eyebrow">초기 Wi-Fi 설정</p>
-    <h1 class="title" id="deviceName">Presence Sensor</h1>
-    <p class="desc">연결할 Wi-Fi를 선택하고 비밀번호를 입력하세요. 설정이 완료되면 기기가 새 네트워크로 이동합니다.</p>
-    <div class="notice">이 Wi-Fi는 인터넷이 없는 설정용 네트워크입니다. 휴대폰이나 PC가 연결 해제를 묻는 경우 연결 유지를 선택하세요.</div>
-    <div class="status">
-      <span>상태</span><b id="stateText">확인 중</b>
-      <span>설정 주소</span><b>192.168.4.1</b>
-    </div>
-    <label>Wi-Fi 목록</label>
-    <div class="networks" id="networks"><div class="message">주변 Wi-Fi를 찾는 중입니다.</div></div>
-    <button class="net-more" id="networkToggle" type="button"></button>
-    <label for="password">비밀번호</label>
-    <input id="password" type="password" autocomplete="current-password" placeholder="Wi-Fi 비밀번호">
-    <div class="actions">
-      <button class="btn secondary" id="refresh" type="button">새로고침</button>
-      <button class="btn" id="connect" type="button" disabled>연결하기</button>
-    </div>
-    <div class="message" id="message"></div>
-  </section>
-</main>
-<script>
-const $=id=>document.getElementById(id);let selected='',allNetworks=[],networksExpanded=false;
-function msg(text,type=''){const el=$('message');el.textContent=text;el.className='message '+type}
-function bars(rssi){if(rssi>=-55)return '강함';if(rssi>=-70)return '보통';return '약함'}
-function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function renderNetworks(){const box=$('networks');const toggle=$('networkToggle');box.innerHTML='';const shown=networksExpanded?allNetworks:allNetworks.slice(0,5);shown.forEach(n=>{const b=document.createElement('button');b.type='button';b.className='net'+(n.ssid===selected?' selected':'');b.innerHTML='<span>'+esc(n.ssid)+'</span><small>'+(n.locked?'잠금 · ':'')+bars(n.rssi)+' · '+n.rssi+'dBm</small>';b.onclick=()=>{selected=n.ssid;document.querySelectorAll('.net').forEach(x=>x.classList.remove('selected'));b.classList.add('selected');$('connect').disabled=false;msg('')};box.appendChild(b)});if(allNetworks.length>5){toggle.textContent=networksExpanded?'접기':'더 보기 '+(allNetworks.length-5)+'개';toggle.classList.add('visible');toggle.onclick=()=>{networksExpanded=!networksExpanded;renderNetworks()}}else{toggle.classList.remove('visible');toggle.onclick=null;toggle.textContent=''}}
-async function loadStatus(){try{const s=await fetch('/api/setup/status',{cache:'no-store'}).then(r=>r.json());$('deviceName').textContent=s.device?.name||'Presence Sensor';$('stateText').textContent=s.wifi?.connected?'연결됨':'설정 대기'}catch(e){$('stateText').textContent='설정 대기'}}
-async function loadNetworks(){const box=$('networks');const hadList=box.querySelector('.net,.net-more');if(!hadList)box.innerHTML='<div class="message">주변 Wi-Fi를 찾는 중입니다.</div>';try{const data=await fetch('/api/setup/networks',{cache:'no-store'}).then(r=>r.json());allNetworks=(data.networks||[]).filter(n=>n.ssid).sort((a,b)=>(b.rssi??-999)-(a.rssi??-999));if(!allNetworks.length){if(!hadList)box.innerHTML='<div class="message">검색된 Wi-Fi가 없습니다. 새로고침을 눌러 다시 검색하세요.</div>';return}if(!allNetworks.some(n=>n.ssid===selected)){selected='';$('connect').disabled=true}renderNetworks()}catch(e){msg('Wi-Fi 목록을 불러오지 못했습니다. 새로고침을 다시 눌러주세요.','error')}}
-async function refreshNetworks(){msg('주변 Wi-Fi를 다시 검색합니다.','');$('refresh').disabled=true;try{await fetch('/api/setup/scan',{method:'POST'});setTimeout(loadNetworks,2800)}catch(e){msg('Wi-Fi 검색을 시작하지 못했습니다.','error')}finally{setTimeout(()=>$('refresh').disabled=false,3000)}}
-async function connect(){if(!selected)return;const fd=new URLSearchParams();fd.set('ssid',selected);fd.set('psk',$('password').value);$('connect').disabled=true;msg('Wi-Fi 정보를 저장하고 연결을 시도합니다.','');try{const r=await fetch('/api/setup/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:fd});if(!r.ok)throw new Error(await r.text());msg('저장되었습니다. 연결되면 이 임시 Wi-Fi가 자동으로 종료될 수 있습니다.','ok');setTimeout(()=>{msg('설정이 완료되었습니다. 이 창은 닫아도 됩니다.','ok')},3000)}catch(e){msg('저장하지 못했습니다. 비밀번호를 확인한 뒤 다시 시도하세요.','error');$('connect').disabled=false}}
-$('refresh').onclick=refreshNetworks;$('connect').onclick=connect;loadStatus();loadNetworks();
-</script>
-</body>
-</html>)HTML";
 
 }  // namespace
+
+void SetupHandler::prepare_setup_access_point() const {
+  if (wifi_connected()) {
+    ESP_LOGI(TAG, "setup: prepare AP skipped because STA is connected");
+    return;
+  }
+
+  const auto before = setup_wifi_stage;
+  if (setup_wifi_stage != SetupWifiStage::IDLE) {
+    ESP_LOGI(TAG, "setup: prepare AP skipped stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
+    return;
+  }
+  reset_setup_wifi_state_();
+  setup_wifi_stage = SetupWifiStage::READY;
+
+  ESP_LOGI(TAG, "setup: prepare access point stage=%s->%s",
+           setup_wifi_stage_to_string(before), setup_wifi_stage_to_string(setup_wifi_stage));
+  ensure_setup_wifi_events_registered();
+  pause_setup_sta_now_();
+  const bool scan_started = start_setup_network_scan_from_idf_("pre_ap", true);
+  this->server_->finish_setup_scan_and_open_ap_after(scan_started ? 4500 : 1000);
+}
+
+void SetupHandler::finish_setup_scan() const {
+  if (!setup_network_scan_running) {
+    ESP_LOGD(TAG, "setup: finish scan skipped because scan is not running");
+    return;
+  }
+  finish_setup_network_scan_from_idf_(setup_network_scan_reason.empty() ? "finish" : setup_network_scan_reason.c_str());
+}
+
+void SetupHandler::finish_setup_scan_and_open_ap() const {
+  if (setup_network_scan_running) {
+    finish_setup_network_scan_from_idf_(setup_network_scan_reason.empty() ? "finish_open_ap" :
+                                                                    setup_network_scan_reason.c_str());
+  }
+  this->server_->open_setup_ap_deferred();
+}
 
 bool SetupHandler::can_handle(AsyncWebServerRequest *request) const {
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   auto url = request->url_to(url_buf);
   if (request->method() == HTTP_GET) {
-    return url == "/" || url == "/setup" || url == "/api/setup/status" || url == "/api/setup/networks";
+    return url == "/" || url == "/setup" || url == "/api/setup/status" || url == "/api/setup/networks" ||
+           url == "/api/setup/ping";
   }
   if (request->method() == HTTP_POST) {
-    return url == "/api/setup/scan" || url == "/api/setup/wifi";
+    return url == "/api/setup/scan" || url == "/api/setup/wifi" || url == "/api/setup/prepare" ||
+           url == "/api/setup/finalize-security" || url == "/api/setup/apply-wifi" ||
+           url == "/api/setup/connected" || url == "/api/setup/finish";
   }
   return false;
 }
@@ -141,35 +134,69 @@ bool SetupHandler::handle(AsyncWebServerRequest *request) {
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   auto url = request->url_to(url_buf);
   if (request->method() == HTTP_GET && url == "/") {
+    ESP_LOGD(TAG, "setup_http: GET /");
     this->handle_root_(request);
     return true;
   }
   if (request->method() == HTTP_GET && url == "/setup") {
+    ESP_LOGD(TAG, "setup_http: GET /setup");
     this->handle_setup_page_(request);
     return true;
   }
   if (request->method() == HTTP_GET && url == "/api/setup/status") {
+    ESP_LOGD(TAG, "setup_http: GET /api/setup/status");
     this->handle_status_(request);
     return true;
   }
+  if (request->method() == HTTP_GET && url == "/api/setup/ping") {
+    ESP_LOGD(TAG, "setup_http: GET /api/setup/ping");
+    request->send(200, "application/json", "{\"ok\":true}");
+    return true;
+  }
   if (request->method() == HTTP_GET && url == "/api/setup/networks") {
+    ESP_LOGD(TAG, "setup_http: GET /api/setup/networks");
     this->handle_networks_(request);
     return true;
   }
   if (request->method() == HTTP_POST && url == "/api/setup/scan") {
+    ESP_LOGD(TAG, "setup_http: POST /api/setup/scan");
     this->handle_scan_(request);
     return true;
   }
   if (request->method() == HTTP_POST && url == "/api/setup/wifi") {
-    this->handle_wifi_save_(request);
+    ESP_LOGD(TAG, "setup_http: POST /api/setup/wifi");
+    this->handle_apply_wifi_(request);
+    return true;
+  }
+  if (request->method() == HTTP_POST && (url == "/api/setup/prepare" || url == "/api/setup/finalize-security")) {
+    ESP_LOGD(TAG, "setup_http: POST %s", url);
+    this->handle_prepare_security_(request);
+    return true;
+  }
+  if (request->method() == HTTP_POST && url == "/api/setup/apply-wifi") {
+    ESP_LOGD(TAG, "setup_http: POST /api/setup/apply-wifi");
+    this->handle_apply_wifi_(request);
+    return true;
+  }
+  if (request->method() == HTTP_POST && url == "/api/setup/connected") {
+    ESP_LOGD(TAG, "setup_http: POST /api/setup/connected");
+    this->handle_connected_(request);
+    return true;
+  }
+  if (request->method() == HTTP_POST && url == "/api/setup/finish") {
+    ESP_LOGD(TAG, "setup_http: POST /api/setup/finish");
+    this->handle_finish_(request);
     return true;
   }
 
+  ESP_LOGW(TAG, "setup_http: not_found method=%d url=%s", static_cast<int>(request->method()), url);
   request->send(404, "application/json", "{\"ok\":false,\"error\":\"not_found\"}");
   return true;
 }
 
 void SetupHandler::handle_root_(AsyncWebServerRequest *request) const {
+  ESP_LOGD(TAG, "setup: root setup_mode_active=%d stage=%s", setup_mode_active() ? 1 : 0,
+           setup_wifi_stage_to_string(setup_wifi_stage));
   if (setup_mode_active()) {
     request->redirect("/setup");
   } else {
@@ -178,56 +205,77 @@ void SetupHandler::handle_root_(AsyncWebServerRequest *request) const {
 }
 
 void SetupHandler::handle_setup_page_(AsyncWebServerRequest *request) const {
+  ESP_LOGD(TAG, "setup: serve setup page stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
+  this->begin_setup_session_();
   auto *response = request->beginResponse(200, "text/html; charset=utf-8", reinterpret_cast<const uint8_t *>(SETUP_PAGE),
-                                          sizeof(SETUP_PAGE) - 1);
+                                          SETUP_PAGE_SIZE);
   response->addHeader("Cache-Control", "no-store");
   request->send(response);
 }
 
 void SetupHandler::handle_status_(AsyncWebServerRequest *request) const {
+  this->begin_setup_session_();
   char mac_s[18];
   get_mac_address_pretty_into_buffer(mac_s);
   const bool connected = wifi_connected();
   const bool ap_active = wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_ap_active();
   const auto name = json_escape(App.get_name());
+  std::string current_ip = !setup_wifi_connected_ip.empty() ? setup_wifi_connected_ip : wifi_sta_ip_address();
+  if (connected && !current_ip.empty()) {
+    setup_wifi_connected_ip = current_ip;
+    if (setup_wifi_stage != SetupWifiStage::CONNECTED) {
+      ESP_LOGD(TAG, "setup: status recovered stage=%s->connected ip=%s",
+               setup_wifi_stage_to_string(setup_wifi_stage), current_ip.c_str());
+      setup_wifi_stage = SetupWifiStage::CONNECTED;
+    }
+    if (setup_wifi_connected_ms == 0)
+      setup_wifi_connected_ms = millis();
+  } else if (current_ip.empty() && !setup_wifi_connected_ip.empty()) {
+    current_ip = setup_wifi_connected_ip;
+  }
+  const auto ip = json_escape(current_ip);
+  const char *key_state = api_key_state();
+
+  if (setup_wifi_stage == SetupWifiStage::CONNECTING) {
+    if ((connected && !current_ip.empty()) || !setup_wifi_connected_ip.empty()) {
+      setup_wifi_stage = SetupWifiStage::CONNECTED;
+      if (setup_wifi_connected_ms == 0)
+        setup_wifi_connected_ms = millis();
+      ESP_LOGD(TAG, "setup: status promoted connecting->connected ip=%s", current_ip.c_str());
+    } else if (setup_wifi_started_ms != 0 && millis() - setup_wifi_started_ms > 90000) {
+      setup_wifi_stage = SetupWifiStage::FAILED;
+      ESP_LOGW(TAG, "setup: status promoted connecting->failed elapsed_ms=%u disconnect_count=%u",
+               millis() - setup_wifi_started_ms, setup_wifi_disconnect_count);
+    }
+  }
+
+  ESP_LOGD(TAG, "setup: status connected=%d ap_active=%d ip=%s stage=%s ssid='%s' key=%s",
+           connected ? 1 : 0, ap_active ? 1 : 0, current_ip.c_str(), setup_wifi_stage_to_string(setup_wifi_stage),
+           setup_wifi_ssid.c_str(), key_state);
 
   auto *stream = request->beginResponseStream("application/json");
-  stream->printf("{\"ok\":true,\"device\":{\"name\":\"%s\",\"mac\":\"%s\"},\"wifi\":{\"connected\":%s,\"apActive\":%s}}",
-                 name.c_str(), mac_s, connected ? "true" : "false", ap_active ? "true" : "false");
+  stream->printf(
+      "{\"ok\":true,\"device\":{\"name\":\"%s\",\"mac\":\"%s\"},"
+      "\"wifi\":{\"connected\":%s,\"apActive\":%s,\"ip\":\"%s\"},\"setup\":{\"stage\":\"%s\",\"ssid\":\"%s\"},"
+      "\"apiKeyState\":\"%s\"}",
+      name.c_str(), mac_s, (connected || setup_wifi_stage == SetupWifiStage::CONNECTED) ? "true" : "false",
+      ap_active ? "true" : "false", ip.c_str(),
+      setup_wifi_stage_to_string(setup_wifi_stage), json_escape(setup_wifi_ssid).c_str(), key_state);
   request->send(stream);
 }
 
 void SetupHandler::handle_networks_(AsyncWebServerRequest *request) const {
-  if (wifi::global_wifi_component == nullptr) {
-    request->send(503, "application/json", "{\"ok\":false,\"error\":\"wifi_unavailable\"}");
-    return;
-  }
+  this->begin_setup_session_();
+  const auto networks = setup_network_cache;
+  const uint32_t age_ms = setup_network_cache_ready ? millis() - setup_network_cache_ms : 0;
 
-  std::vector<NetworkInfo> networks;
-  for (const auto &scan : wifi::global_wifi_component->get_scan_result()) {
-    if (scan.get_is_hidden())
-      continue;
-    const std::string ssid = scan.get_ssid().str();
-    if (ssid.empty())
-      continue;
-
-    auto found = std::find_if(networks.begin(), networks.end(), [&ssid](const NetworkInfo &item) {
-      return item.ssid == ssid;
-    });
-    if (found == networks.end()) {
-      networks.push_back(NetworkInfo{ssid, scan.get_rssi(), scan.get_with_auth()});
-    } else if (scan.get_rssi() > found->rssi) {
-      found->rssi = scan.get_rssi();
-      found->locked = scan.get_with_auth();
-    }
-  }
-
-  std::sort(networks.begin(), networks.end(), [](const NetworkInfo &a, const NetworkInfo &b) {
-    return a.rssi > b.rssi;
-  });
+  ESP_LOGD(TAG, "setup: networks returning count=%u cache_ready=%d age_ms=%u",
+           static_cast<unsigned>(networks.size()), setup_network_cache_ready ? 1 : 0, age_ms);
 
   auto *stream = request->beginResponseStream("application/json");
-  stream->print("{\"ok\":true,\"networks\":[");
+  stream->printf("{\"ok\":true,\"cacheReady\":%s,\"scanning\":%s,\"cacheAgeMs\":%u,\"networks\":[",
+                 setup_network_cache_ready ? "true" : "false", setup_network_scan_running ? "true" : "false",
+                 age_ms);
   bool first = true;
   for (const auto &network : networks) {
     if (!first)
@@ -242,16 +290,74 @@ void SetupHandler::handle_networks_(AsyncWebServerRequest *request) const {
 }
 
 void SetupHandler::handle_scan_(AsyncWebServerRequest *request) const {
-  if (wifi::global_wifi_component == nullptr) {
-    request->send(503, "application/json", "{\"ok\":false,\"error\":\"wifi_unavailable\"}");
+  this->begin_setup_session_();
+  if (setup_wifi_stage == SetupWifiStage::CONNECTING) {
+    request->send(409, "application/json", "{\"ok\":false,\"error\":\"wifi_connecting\"}");
     return;
   }
 
-  wifi::global_wifi_component->start_scanning();
+  ESP_LOGI(TAG, "setup: esp-idf scan requested by setup UI stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
+  const bool ok = start_setup_network_scan_from_idf_("manual", false);
+  if (!ok) {
+    request->send(500, "application/json", "{\"ok\":false,\"error\":\"scan_failed\"}");
+    return;
+  }
+  this->server_->finish_setup_scan_after(3000);
   request->send(200, "application/json", "{\"ok\":true,\"message\":\"scan_started\"}");
 }
 
-void SetupHandler::handle_wifi_save_(AsyncWebServerRequest *request) const {
+void SetupHandler::handle_prepare_security_(AsyncWebServerRequest *request) const {
+#ifdef USE_API_NOISE
+  if (api::global_api_server == nullptr) {
+    request->send(503, "application/json", "{\"ok\":false,\"error\":\"api_key_unavailable\"}");
+    return;
+  }
+
+  const auto dashboard_url = json_escape(std::string("http://") + App.get_name() + ".local/dashboard");
+  auto &ctx = api::global_api_server->get_noise_ctx();
+  const bool has_psk = ctx.has_psk();
+  const bool needs_new_key = !has_psk || psk_equals(ctx.get_psk(), DEMO_API_PSK);
+  ESP_LOGI(TAG, "setup: prepare_security has_psk=%d needs_new_key=%d", has_psk ? 1 : 0, needs_new_key ? 1 : 0);
+
+  if (!needs_new_key) {
+    ESP_LOGI(TAG, "setup: prepare_security keeping existing api key");
+    auto *stream = request->beginResponseStream("application/json");
+    stream->printf("{\"ok\":true,\"apiKeyChanged\":false,\"apiKeyState\":\"custom\",\"dashboardUrl\":\"%s\"}",
+                   dashboard_url.c_str());
+    request->send(stream);
+    return;
+  }
+
+  api::psk_t new_psk{};
+  if (!generate_api_key(&new_psk)) {
+    ESP_LOGE(TAG, "setup: prepare_security random_failed");
+    request->send(500, "application/json", "{\"ok\":false,\"error\":\"random_failed\"}");
+    return;
+  }
+  if (psk_equals(new_psk, DEMO_API_PSK)) {
+    new_psk[0] ^= 0x5A;
+  }
+  if (!api::global_api_server->save_noise_psk(new_psk, true)) {
+    ESP_LOGE(TAG, "setup: prepare_security api_key_save_failed");
+    request->send(500, "application/json", "{\"ok\":false,\"error\":\"api_key_save_failed\"}");
+    return;
+  }
+
+  ESP_LOGI(TAG, "setup: prepare_security generated new api key");
+  const auto api_key = json_escape(encode_base64_psk(new_psk));
+  auto *stream = request->beginResponseStream("application/json");
+  stream->printf(
+      "{\"ok\":true,\"apiKeyChanged\":true,\"apiKeyState\":\"custom\",\"apiKey\":\"%s\",\"dashboardUrl\":\"%s\"}",
+      api_key.c_str(), dashboard_url.c_str());
+  request->send(stream);
+  ESP_LOGI(TAG, "setup: prepare_security scheduling auto reboot guard");
+  this->server_->schedule_setup_auto_reboot();
+#else
+  request->send(503, "application/json", "{\"ok\":false,\"error\":\"api_key_unsupported\"}");
+#endif
+}
+
+void SetupHandler::handle_apply_wifi_(AsyncWebServerRequest *request) const {
   if (wifi::global_wifi_component == nullptr) {
     request->send(503, "application/json", "{\"ok\":false,\"error\":\"wifi_unavailable\"}");
     return;
@@ -263,10 +369,58 @@ void SetupHandler::handle_wifi_save_(AsyncWebServerRequest *request) const {
     request->send(400, "application/json", "{\"ok\":false,\"error\":\"missing_ssid\"}");
     return;
   }
+  if (cached_network_is_open_(ssid)) {
+    request->send(400, "application/json", "{\"ok\":false,\"error\":\"open_wifi_unsupported\"}");
+    return;
+  }
+  if (psk.size() < 8 || psk.size() > 63) {
+    request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_password_length\"}");
+    return;
+  }
 
-  ESP_LOGI(TAG, "Requested setup WiFi change: SSID='%s'", ssid.c_str());
-  this->server_->save_wifi_sta_deferred(ssid, psk);
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"saved\"}");
+  ESP_LOGI(TAG, "Applying setup WiFi: SSID='%s'", ssid.c_str());
+  ESP_LOGI(TAG, "setup: apply_wifi begin ssid='%s' stage=%s", ssid.c_str(),
+           setup_wifi_stage_to_string(setup_wifi_stage));
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"wifi_checking\",\"stage\":\"checking_wifi\"}");
+  setup_wifi_stage = SetupWifiStage::CONNECTING;
+  setup_wifi_ssid = ssid;
+  setup_wifi_psk = psk;
+  setup_wifi_connected_ip.clear();
+  setup_wifi_started_ms = millis();
+  setup_wifi_connected_ms = 0;
+  setup_wifi_disconnect_count = 0;
+  setup_wifi_credentials_saved = false;
+  ensure_setup_wifi_events_registered();
+  ESP_LOGD(TAG, "setup: apply_wifi set stage=connecting");
+  this->server_->connect_setup_wifi_deferred(ssid, psk);
+}
+
+void SetupHandler::handle_connected_(AsyncWebServerRequest *request) const {
+  ESP_LOGI(TAG, "setup: connected endpoint called stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"setup_ap_close_scheduled\"}");
+  setup_wifi_stage = SetupWifiStage::CONNECTED;
+  if (setup_wifi_connected_ip.empty())
+    setup_wifi_connected_ip = wifi_sta_ip_address();
+  if (setup_wifi_connected_ms == 0)
+    setup_wifi_connected_ms = millis();
+  this->server_->close_setup_ap_after(5 * 60 * 1000, []() {
+    ESP_LOGI(TAG, "setup: connected grace period expired, reset setup stage");
+#ifdef USE_ESP32
+    persist_setup_wifi_credentials_();
+#endif
+    reset_setup_wifi_state_();
+  });
+}
+
+void SetupHandler::handle_finish_(AsyncWebServerRequest *request) const {
+  ESP_LOGI(TAG, "setup: finish endpoint called stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
+  request->send(200, "application/json", "{\"ok\":true,\"message\":\"setup_ap_closing\"}");
+#ifdef USE_ESP32
+  persist_setup_wifi_credentials_();
+#endif
+  reset_setup_wifi_state_();
+  ESP_LOGI(TAG, "setup: finish reset stage=idle and close AP");
+  this->server_->close_setup_ap_deferred();
 }
 
 }  // namespace radar_api_server
