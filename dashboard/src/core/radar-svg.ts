@@ -4,12 +4,14 @@ import { targetColor } from "./defaults";
 import type { HeldRadarTarget, RadarCardConfig, RadarViewport, RadarZoneDisplay } from "./types";
 
 const SAFE_CSS_HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const REMOTE_RANGE_START_MM = 6000;
 
 export function renderGrid(viewport: RadarViewport): string {
   const centerX = viewport.width / 2;
   const bottomY = viewport.height - viewport.pad;
   const halfFov = viewport.fovDegrees / 2;
   const beamArc = sampledArcPath(viewport.rangeY, -halfFov, halfFov, viewport, false);
+  const remoteRangeBand = remoteRangeBandPath(REMOTE_RANGE_START_MM, viewport.rangeY, -halfFov, halfFov, viewport);
   const angleLines = [-60, -30, 0, 30, 60]
     .filter((angle) => Math.abs(angle) <= halfFov)
     .map((angle) => {
@@ -33,6 +35,7 @@ export function renderGrid(viewport: RadarViewport): string {
 
   return `
     <path class="beam" d="M ${centerX} ${bottomY} L ${beamArc} Z" />
+    ${remoteRangeBand ? `<path class="remote-range-band" d="${remoteRangeBand}" />` : ""}
     <g class="grid">${angleLines}${distanceArcs}</g>
   `;
 }
@@ -100,6 +103,35 @@ function sampledArcPath(
     points.push(`${command}${point.x} ${point.y}`);
   }
   return points.join(" ");
+}
+
+function remoteRangeBandPath(
+  innerDistance: number,
+  outerDistance: number,
+  startAngle: number,
+  endAngle: number,
+  viewport: RadarViewport
+): string {
+  if (outerDistance <= innerDistance) return "";
+  const outerArc = sampledArcPoints(outerDistance, startAngle, endAngle, viewport);
+  const innerArc = sampledArcPoints(innerDistance, endAngle, startAngle, viewport);
+  return `M ${outerArc.join(" L ")} L ${innerArc.join(" L ")} Z`;
+}
+
+function sampledArcPoints(
+  distance: number,
+  startAngle: number,
+  endAngle: number,
+  viewport: RadarViewport
+): string[] {
+  const points: string[] = [];
+  const steps = 36;
+  for (let index = 0; index <= steps; index += 1) {
+    const angle = startAngle + ((endAngle - startAngle) * index) / steps;
+    const point = toScreenPoint(...polarTuple(distance, angle), viewport);
+    points.push(`${point.x} ${point.y}`);
+  }
+  return points;
 }
 
 function polarTuple(distance: number, angleDegrees: number): [number, number] {

@@ -6,9 +6,29 @@ const startTime = Date.now();
 const HEATMAP_COLS = 33;
 const HEATMAP_ROWS = 26;
 const HEATMAP_CELL_COUNT = HEATMAP_COLS * HEATMAP_ROWS;
+const CONFIG_STORAGE_KEY = "presence-sensor-demo-config";
 
 function plainClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function loadStoredConfig(): WebDeviceConfig | null {
+  try {
+    const raw = sessionStorage.getItem(CONFIG_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as WebDeviceConfig;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeConfig(nextConfig: WebDeviceConfig): void {
+  sessionStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(plainClone(nextConfig)));
+}
+
+function clearStoredConfig(): void {
+  sessionStorage.removeItem(CONFIG_STORAGE_KEY);
 }
 
 function waveValue(base: number, spread: number, elapsed: number, speed: number, phase = 0): number {
@@ -111,7 +131,7 @@ function createDemoStats(): WebDeviceStats {
   };
 }
 
-let config: WebDeviceConfig = {
+const defaultConfig: WebDeviceConfig = {
   version: 1,
   integrationMode: "unknown",
   zones: [
@@ -146,6 +166,7 @@ let config: WebDeviceConfig = {
     hasImage: false
   }
 };
+let config: WebDeviceConfig = loadStoredConfig() ?? plainClone(defaultConfig);
 let statusLedEnabled = true;
 let ledBlinkDuration = 60;
 let environmentCorrectionEnabled = true;
@@ -192,7 +213,34 @@ export const mockApi: DeviceApi = {
       temperatureC: waveValue(25.4, 0.25, elapsed, 17),
       humidityPercent: waveValue(45, 0.45, elapsed, 19, 1.1),
       illuminanceLux: Math.round(waveValue(180, 1.8, elapsed, 23, 2.2)),
-      targets
+      targets,
+      debug: {
+        presenceReason: "target",
+        presenceOffReason: "none",
+        motionReason: "moving_target",
+        lastPresenceDropMs: 0,
+        lastValidTargetAgeMs: 0,
+        emptySamplesConsecutive: 0,
+        shortPresenceDropCount: 1,
+        longPresenceDropCount: 0,
+        still: {
+          state: "candidate",
+          reason: "same_area_still",
+          confidence: Math.round(48 + Math.sin(elapsed / 8) * 18),
+          holdActive: false,
+          lastSeenAgeMs: Math.round((elapsed % 3) * 1000),
+          anchor: {
+            x: targets[0]?.x ?? 0,
+            y: targets[0]?.y ?? 0
+          }
+        },
+        range: {
+          reason: targetCount >= 3 ? "remote_pir_validated" : "ok",
+          suspectTargetCount: targetCount >= 3 ? 1 : 0,
+          outOfRangeTargetCount: 0,
+          remoteCandidateCount: targetCount >= 3 ? 1 : 0
+        }
+      }
     };
   },
 
@@ -206,6 +254,7 @@ export const mockApi: DeviceApi = {
           hasImage: true
         }
       };
+      storeConfig(config);
     }
     return plainClone(config);
   },
@@ -299,6 +348,7 @@ export const mockApi: DeviceApi = {
 
   async saveConfig(nextConfig: WebDeviceConfig): Promise<void> {
     config = plainClone(nextConfig);
+    storeConfig(config);
   },
 
   async saveStats(nextStats: WebDeviceStats): Promise<void> {
@@ -335,6 +385,7 @@ export const mockApi: DeviceApi = {
         hasImage: true
       }
     };
+    storeConfig(config);
   },
 
   async uploadFirmware(file, onProgress): Promise<void> {
@@ -352,16 +403,14 @@ export const mockApi: DeviceApi = {
 
   async resetSystem(options) {
     if (options.settings) {
-      config = {
-        version: 1,
-        integrationMode: "unknown",
-        zones: [],
-        calibrationZones: [],
-        floorplan: {
-          enabled: false,
-          hasImage: false
-        }
+      config = plainClone(defaultConfig);
+      config.zones = [];
+      config.calibrationZones = [];
+      config.floorplan = {
+        enabled: false,
+        hasImage: false
       };
+      clearStoredConfig();
       statusLedEnabled = true;
       ledBlinkDuration = 60;
       environmentCorrectionEnabled = true;

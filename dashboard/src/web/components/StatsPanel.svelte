@@ -401,6 +401,7 @@
         <span class="heatmap-distance-label heatmap-distance-label-2m">2m</span>
         <span class="heatmap-distance-label heatmap-distance-label-4m">4m</span>
         <span class="heatmap-distance-label heatmap-distance-label-6m">6m</span>
+        <span class="heatmap-distance-label heatmap-distance-label-8m">8m</span>
         <div class="heatmap-sensor"></div>
         <p class="map-status-line stats-heatmap-status">
           {heatmapInfo.label} 감지 히트맵 · {heatmapInfo.totalHits

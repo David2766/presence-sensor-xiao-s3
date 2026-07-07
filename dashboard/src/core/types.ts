@@ -120,6 +120,35 @@ export interface WebDeviceState {
   temperatureC?: number | null;
   humidityPercent?: number | null;
   illuminanceLux?: number | null;
+  debug?: WebDeviceDebug;
+}
+
+export interface WebDeviceDebug {
+  presenceReason?: string;
+  presenceOffReason?: string;
+  motionReason?: string;
+  lastPresenceDropMs?: number | null;
+  lastValidTargetAgeMs?: number | null;
+  emptySamplesConsecutive?: number;
+  shortPresenceDropCount?: number;
+  longPresenceDropCount?: number;
+  still?: {
+    state?: string;
+    reason?: string;
+    confidence?: number;
+    holdActive?: boolean;
+    lastSeenAgeMs?: number | null;
+    anchor?: {
+      x?: number;
+      y?: number;
+    } | null;
+  };
+  range?: {
+    reason?: string;
+    suspectTargetCount?: number;
+    outOfRangeTargetCount?: number;
+    remoteCandidateCount?: number;
+  };
 }
 
 export interface WebDeviceConfig {

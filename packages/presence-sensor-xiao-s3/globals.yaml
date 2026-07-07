@@ -55,6 +55,38 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  - id: target_1_range_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: target_2_range_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: target_3_range_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: target_1_remote_suspect_latched
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: target_2_remote_suspect_latched
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: target_3_remote_suspect_latched
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: range_pir_previous_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: range_pir_last_on_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
   - id: target_1_filter_blocked
     type: bool
     restore_value: no
@@ -83,6 +115,102 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: '0'
+  - id: diag_presence_previous_stable
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: diag_motion_previous_stable
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: diag_last_presence_reason
+    type: std::string
+    restore_value: no
+    initial_value: '"boot"'
+  - id: diag_last_presence_off_reason
+    type: std::string
+    restore_value: no
+    initial_value: '"boot"'
+  - id: diag_last_motion_reason
+    type: std::string
+    restore_value: no
+    initial_value: '"boot"'
+  - id: diag_last_presence_change_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: diag_last_motion_change_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: diag_last_presence_drop_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: diag_last_valid_target_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: diag_empty_samples_consecutive
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: diag_short_presence_drop_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: diag_long_presence_drop_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: diag_still_confidence
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: diag_still_anchor_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: diag_still_anchor_x
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+  - id: diag_still_anchor_y
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+  - id: diag_still_last_seen_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: diag_still_confirmed
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: diag_still_state
+    type: std::string
+    restore_value: no
+    initial_value: '"idle"'
+  - id: diag_still_reason
+    type: std::string
+    restore_value: no
+    initial_value: '"boot"'
+  - id: diag_range_suspect_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: diag_range_out_of_range_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: diag_range_remote_candidate_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: diag_range_reason
+    type: std::string
+    restore_value: no
+    initial_value: '"boot"'
   - id: dir2_last_seen_ms
     type: uint32_t
     restore_value: no

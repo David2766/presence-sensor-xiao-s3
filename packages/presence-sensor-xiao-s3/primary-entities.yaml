@@ -19,9 +19,9 @@ binary_sensor:
     device_class: motion
     lambda: |-
       return
-        (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && fabsf(id(target_1_speed_raw).state) > id(dir_stationary_speed)) ||
-        (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && fabsf(id(target_2_speed_raw).state) > id(dir_stationary_speed)) ||
-        (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && fabsf(id(target_3_speed_raw).state) > id(dir_stationary_speed));
+        (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) > id(dir_stationary_speed)) ||
+        (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) > id(dir_stationary_speed)) ||
+        (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && id(target_3_range_valid) && fabsf(id(target_3_speed_raw).state) > id(dir_stationary_speed));
     filters:
       - delayed_off: 1s
 
@@ -31,9 +31,9 @@ binary_sensor:
     device_class: occupancy
     lambda: |-
       return
-        (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && fabsf(id(target_1_speed_raw).state) <= id(dir_stationary_speed)) ||
-        (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && fabsf(id(target_2_speed_raw).state) <= id(dir_stationary_speed)) ||
-        (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && fabsf(id(target_3_speed_raw).state) <= id(dir_stationary_speed));
+        (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) <= id(dir_stationary_speed)) ||
+        (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) <= id(dir_stationary_speed)) ||
+        (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && id(target_3_range_valid) && fabsf(id(target_3_speed_raw).state) <= id(dir_stationary_speed));
     filters:
       - delayed_off: 1s
 

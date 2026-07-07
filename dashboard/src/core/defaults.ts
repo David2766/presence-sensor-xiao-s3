@@ -3,7 +3,7 @@ import type { RadarCardConfig, RadarZoneId } from "./types";
 export const DEFAULT_CARD_CONFIG: RadarCardConfig = {
   title: "Radar Map",
   range_x: 3000,
-  range_y: 6000,
+  range_y: 8000,
   hold_ms: 1500,
   show_distance: true,
   distance_decimals: 2,

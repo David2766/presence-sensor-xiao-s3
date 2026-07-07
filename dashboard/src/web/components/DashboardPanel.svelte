@@ -7,6 +7,7 @@
     loadFloorplanStorageStatus
   } from "../floorplan/floorplan-storage-client";
   import FloorplanRadarPlacementOverlay from "./FloorplanRadarPlacementOverlay.svelte";
+  import DiagnosticDialog from "./DiagnosticDialog.svelte";
   import RadarScene from "./RadarScene.svelte";
   import type { WebControlStatus, WebDeviceConfig, WebDeviceState, WebSystemStatus } from "../types";
 
@@ -64,6 +65,7 @@
   let tuningOpen = $state(false);
   let ledDialogOpen = $state(false);
   let environmentDialogOpen = $state(false);
+  let diagnosticDialogOpen = $state(false);
   let floorplanLoading = $state(false);
   let floorplanError = $state("");
   let floorplanDocument = $state<FloorplanStorageDocument | null>(null);
@@ -573,6 +575,7 @@
           <div class="dashboard-tuning-actions">
             <button type="button" disabled={controlActionBusy} onclick={() => (environmentDialogOpen = true)}>온습도 보정</button>
             <button type="button" disabled={controlActionBusy} onclick={() => (ledDialogOpen = true)}>Status LED 제어</button>
+            <button type="button" onclick={() => (diagnosticDialogOpen = true)}>진단 정보</button>
             <button type="button" disabled={integrationModeActionBusy} onclick={onChangeIntegrationMode}>
               {integrationModeActionBusy ? "변경 중..." : integrationModeButtonText}
             </button>
@@ -634,6 +637,8 @@
     </div>
   </div>
 {/if}
+
+<DiagnosticDialog open={diagnosticDialogOpen} state={deviceState} onClose={() => (diagnosticDialogOpen = false)} />
 
 {#if environmentDialogOpen}
   <div class="dashboard-dialog-backdrop" role="presentation" onclick={closeEnvironmentDialogFromBackdrop}>

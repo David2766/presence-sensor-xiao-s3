@@ -1,4 +1,4 @@
-export const LD2450_MAX_DISTANCE_MM = 6000;
+export const LD2450_MAX_DISTANCE_MM = 8000;
 export const LD2450_FOV_DEGREES = 120;
 export const LD2450_ZONE_MIN_X_MM = -4860;
 export const LD2450_ZONE_MAX_X_MM = 4860;

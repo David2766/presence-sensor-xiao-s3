@@ -39,6 +39,7 @@
   } = $props();
 
   let drag = $state(null);
+  const REMOTE_RANGE_START_MM = 6000;
   const RADAR_WALL_CLEARANCE_PX = 10;
   const RADAR_WALL_DETECT_RADIUS_PX = 12;
   const RADAR_WALL_SEGMENT_MARGIN_PX = 8;
@@ -124,6 +125,24 @@
       points.push(rotatedPoint(Math.sin(radians) * rangeY, Math.cos(radians) * rangeY));
     }
     return points;
+  }
+
+  function remoteRangeBandPoints() {
+    if (!scaleEstimate || rangeY <= REMOTE_RANGE_START_MM) return "";
+    const halfFov = fovDegrees / 2;
+    const steps = 24;
+    const points = [];
+    for (let index = 0; index <= steps; index += 1) {
+      const angle = -halfFov + (halfFov * 2 * index) / steps;
+      const radians = (angle * Math.PI) / 180;
+      points.push(rotatedPoint(Math.sin(radians) * rangeY, Math.cos(radians) * rangeY));
+    }
+    for (let index = steps; index >= 0; index -= 1) {
+      const angle = -halfFov + (halfFov * 2 * index) / steps;
+      const radians = (angle * Math.PI) / 180;
+      points.push(rotatedPoint(Math.sin(radians) * REMOTE_RANGE_START_MM, Math.cos(radians) * REMOTE_RANGE_START_MM));
+    }
+    return points.map((point) => `${point.x},${point.y}`).join(" ");
   }
 
   function distanceArcs() {
@@ -557,6 +576,7 @@
   {@const current = effectivePlacement()}
   {@const handle = rotateHandlePoint()}
   {@const visiblePolygon = visibleRayPolygon()}
+  {@const remoteBand = remoteRangeBandPoints()}
   {@const occlusionMaskVersion = `${ignoredOcclusionSegmentIds.join("|")}:${current.originX}:${current.originY}:${current.rotation}`}
   <svg
     class="floorplan-radar-placement-layer"
@@ -589,6 +609,9 @@
         aria-label="레이더맵 이동"
         onpointerdown={beginMove}
       ></path>
+      {#if remoteBand}
+        <polygon class="floorplan-radar-remote-band" points={remoteBand}></polygon>
+      {/if}
       {#key occlusionMaskVersion}
         <path
           class="floorplan-radar-wall-occlusion"

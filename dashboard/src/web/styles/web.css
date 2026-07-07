@@ -527,6 +527,12 @@ button:disabled {
   vector-effect: non-scaling-stroke;
 }
 
+.floorplan-radar-remote-band {
+  fill: rgba(160, 174, 184, 0.22);
+  stroke: none;
+  pointer-events: none;
+}
+
 .floorplan-radar-wall-occlusion-layer {
   opacity: 0.6;
   pointer-events: none;
@@ -2560,6 +2566,16 @@ button:disabled {
     #111820;
 }
 
+.heatmap-preview::after {
+  content: "";
+  position: absolute;
+  inset: 10px 14px 18px;
+  z-index: 1;
+  background: rgba(160, 174, 184, 0.16);
+  mask-image: radial-gradient(circle at 50% 100%, transparent 0 56%, black 57% 74%, transparent 75%);
+  pointer-events: none;
+}
+
 .stats-main-layout[data-detail="true"] .heatmap-preview {
   height: min(72vh, 760px);
 }
@@ -2604,7 +2620,7 @@ button:disabled {
 .heatmap-distance-label {
   position: absolute;
   left: 50%;
-  z-index: 2;
+  z-index: 3;
   padding: 2px 5px;
   border: 1px solid rgba(123, 184, 216, 0.2);
   border-radius: 999px;
@@ -2618,19 +2634,24 @@ button:disabled {
 }
 
 .heatmap-distance-label-2m {
-  bottom: calc(12px + 24%);
+  bottom: calc(12px + 18%);
 }
 
 .heatmap-distance-label-4m {
-  bottom: calc(12px + 48%);
+  bottom: calc(12px + 36%);
 }
 
 .heatmap-distance-label-6m {
+  bottom: calc(12px + 54%);
+}
+
+.heatmap-distance-label-8m {
   bottom: calc(12px + 72%);
 }
 
 .heatmap-sensor {
   position: absolute;
+  z-index: 3;
   left: 50%;
   bottom: 12px;
   width: 18px;
@@ -3696,6 +3717,96 @@ button:disabled {
   padding-inline: 14px;
 }
 
+.diagnostic-dialog {
+  width: min(92vw, 560px);
+  max-height: min(760px, 88vh);
+  overflow: auto;
+}
+
+.diagnostic-dialog .dashboard-dialog-heading strong {
+  color: #ffe4a3;
+}
+
+.diagnostic-dialog .dashboard-dialog-heading span {
+  color: rgba(215, 238, 252, 0.72);
+}
+
+.diagnostic-empty {
+  padding: 12px;
+  border: 1px solid rgba(123, 184, 216, 0.18);
+  border-radius: 8px;
+  color: rgba(215, 238, 252, 0.72);
+  font-size: var(--rz-font-help);
+  background: rgba(12, 20, 28, 0.48);
+}
+
+.diagnostic-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.diagnostic-summary-grid article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(123, 184, 216, 0.18);
+  border-radius: 8px;
+  background: rgba(12, 20, 28, 0.48);
+}
+
+.diagnostic-summary-grid span,
+.diagnostic-list dt {
+  color: rgba(215, 238, 252, 0.58);
+  font-size: var(--rz-font-help);
+}
+
+.diagnostic-summary-grid strong,
+.diagnostic-list dd {
+  min-width: 0;
+  margin: 0;
+  color: #d7eefc;
+  font-size: var(--rz-font-button);
+  font-weight: var(--rz-weight-button);
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-section {
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostic-section > strong {
+  color: #ffe4a3;
+  font-size: var(--rz-font-label);
+  font-weight: var(--rz-weight-label);
+}
+
+.diagnostic-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.diagnostic-list div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(123, 184, 216, 0.14);
+  border-radius: 8px;
+  background: rgba(123, 184, 216, 0.06);
+}
+
+@media (max-width: 640px) {
+  .diagnostic-summary-grid,
+  .diagnostic-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 .demo-blocker-backdrop {
   position: fixed;
   inset: 0;
@@ -4291,6 +4402,12 @@ button:disabled {
   fill: rgba(88, 172, 214, 0.24);
   stroke: rgba(123, 184, 216, 0.65);
   stroke-width: 1.4;
+}
+
+.remote-range-band {
+  fill: rgba(160, 174, 184, 0.2);
+  stroke: none;
+  pointer-events: none;
 }
 
 .grid line,

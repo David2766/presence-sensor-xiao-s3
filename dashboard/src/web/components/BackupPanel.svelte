@@ -1043,8 +1043,8 @@
             <dd>{systemStatusLoading ? "확인 중" : systemStatusError ? "확인 실패" : systemStatus ? "데이터 확인됨" : "대기 중"}</dd>
           </div>
           <div>
-            <dt>저장 데이터</dt>
-            <dd>{systemStatus ? dataStoragePercentText : "-"}</dd>
+            <dt>Flash 점유량</dt>
+            <dd>{systemStatus ? flashOccupancyPercentText : "-"}</dd>
           </div>
         </dl>
       </div>

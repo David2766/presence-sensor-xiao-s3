@@ -1,6 +1,10 @@
 |-
   const uint32_t now = millis();
   
+  // === 섹션 1: 존/보정 설정 파싱 및 point-in-polygon 헬퍼 ===
+  // radar_api에 저장된 software/calibration zone JSON을 읽고, 타입 판정과 점 포함 여부를 계산한다.
+  // 설정이 없거나 깨진 경우 각 헬퍼가 false/0을 반환하도록 설계되어 있으며, 조기 반환으로 전체 감지를 중단하지 않는다.
+  // 직접 만든 문자열 파서는 임베디드 힙 사용을 낮추기 위한 경량 경로이므로 동작 보존이 중요하다.
   auto clamp_value = [](float value, float min_value, float max_value) -> float {
     if (value < min_value) return min_value;
     if (value > max_value) return max_value;
@@ -163,6 +167,8 @@
         since = now;
         set_target_reduced_since(target_index, since);
       }
+      // 보정 reduced 존에서는 즉시 필터링하지 않고 일정 시간 버틴 뒤 통과시킨다.
+      // PIR 움직임이 있으면 실제 움직임일 가능성이 높으므로 800ms, 없으면 2500ms를 요구한다.
       const uint32_t required_ms = id(pir_motion).state ? 800 : 2500;
       return (now - since) < required_ms ? 20 + calibration_reduced_zone : 0;
     }
@@ -232,7 +238,12 @@
     if (zone_index == 6) id(today_software_zone_6_hits)++;
   };
   
+  // === 섹션 2: 필터/보정 모드 판정 및 존 진입 전이 통계 ===
+  // 각 타깃이 software filter, calibration filter, calibration reduced 존에 걸리는지 계산한다.
+  // 보정/소프트웨어 존의 hit 통계는 상태 전이를 기준으로 증가시켜 같은 존 체류 중 중복 집계를 피한다.
   auto record_software_zone_transitions = [&](int target_index, int current_mask) {
+    // 존 안에 머무는 동안 중복 카운트를 막기 위해 새로 진입한 비트만 집계한다.
+    // 이전 마스크에 없고 현재 마스크에 생긴 비트가 이번 프레임의 신규 진입이다.
     const int previous_mask = previous_software_zone_mask(target_index);
     const int entered_mask = current_mask & ~previous_mask;
     for (int zone_index = 1; zone_index <= 6; zone_index++) {
@@ -312,9 +323,84 @@
     set_previous_calibration_reduced_active(3, false);
   }
   
-  const bool target1_valid = id(target_1_direction_raw).state != "NA" && !id(target_1_filtered);
-  const bool target2_valid = id(target_2_direction_raw).state != "NA" && !id(target_2_filtered);
-  const bool target3_valid = id(target_3_direction_raw).state != "NA" && !id(target_3_filtered);
+  // === 섹션 3: presence/motion 안정화(디바운스) 상태 계산 ===
+  // 필터링되지 않은 타깃과 PIR 상태를 조합해 프론트엔드/자동 제어용 재실 및 움직임 상태를 만든다.
+  // 필터 블록 상태에서는 PIR만으로 재실/움직임이 켜지지 않도록 막아 오탐을 줄인다.
+  const bool target1_seen = id(target_1_direction_raw).state != "NA" && !id(target_1_filtered);
+  const bool target2_seen = id(target_2_direction_raw).state != "NA" && !id(target_2_filtered);
+  const bool target3_seen = id(target_3_direction_raw).state != "NA" && !id(target_3_filtered);
+  const float range_min_valid_mm = 100.0f;
+  const float range_near_max_mm = 6000.0f;
+  const float range_far_max_mm = 8000.0f;
+  const uint32_t range_pir_entry_window_ms = 2500;
+  const bool pir_now_for_range = id(pir_motion).state;
+  if (pir_now_for_range && !id(range_pir_previous_state)) {
+    id(range_pir_last_on_ms) = now;
+  }
+  id(range_pir_previous_state) = pir_now_for_range;
+  const bool pir_recent_for_range =
+    id(range_pir_last_on_ms) > 0 &&
+    (now - id(range_pir_last_on_ms)) <= range_pir_entry_window_ms;
+  id(diag_range_suspect_count) = 0;
+  id(diag_range_out_of_range_count) = 0;
+  id(diag_range_remote_candidate_count) = 0;
+  id(diag_range_reason) = "ok";
+  auto target_range_mm = [](float x, float y, float distance) -> float {
+    if (!isnan(distance) && distance > 0.0f) return distance;
+    if (isnan(x) || isnan(y)) return NAN;
+    return sqrtf(x * x + y * y);
+  };
+  auto set_range_reason = [](const char *reason) {
+    if (id(diag_range_reason) == "ok") id(diag_range_reason) = reason;
+  };
+  auto range_gate = [&](bool seen, float distance, bool &remote_suspect_latched) -> bool {
+    if (!seen) {
+      remote_suspect_latched = false;
+      return false;
+    }
+    if (isnan(distance) || distance < range_min_valid_mm) {
+      remote_suspect_latched = false;
+      id(diag_range_suspect_count)++;
+      set_range_reason("invalid_distance");
+      return false;
+    }
+    if (distance <= range_near_max_mm) {
+      remote_suspect_latched = false;
+      return true;
+    }
+    if (distance > range_far_max_mm) {
+      remote_suspect_latched = true;
+      id(diag_range_out_of_range_count)++;
+      set_range_reason("out_of_range");
+      return false;
+    }
+    if (remote_suspect_latched) {
+      id(diag_range_suspect_count)++;
+      set_range_reason("remote_before_pir");
+      return false;
+    }
+    if (pir_recent_for_range) {
+      id(diag_range_remote_candidate_count)++;
+      set_range_reason("remote_pir_validated");
+      return true;
+    }
+    remote_suspect_latched = true;
+    id(diag_range_suspect_count)++;
+    set_range_reason("remote_without_pir");
+    return false;
+  };
+  id(target_1_range_valid) = range_gate(target1_seen,
+                                       target_range_mm(id(target_1_x_raw).state, id(target_1_y_raw).state, id(target_1_distance_raw).state),
+                                       id(target_1_remote_suspect_latched));
+  id(target_2_range_valid) = range_gate(target2_seen,
+                                       target_range_mm(id(target_2_x_raw).state, id(target_2_y_raw).state, id(target_2_distance_raw).state),
+                                       id(target_2_remote_suspect_latched));
+  id(target_3_range_valid) = range_gate(target3_seen,
+                                       target_range_mm(id(target_3_x_raw).state, id(target_3_y_raw).state, id(target_3_distance_raw).state),
+                                       id(target_3_remote_suspect_latched));
+  const bool target1_valid = target1_seen && id(target_1_range_valid);
+  const bool target2_valid = target2_seen && id(target_2_range_valid);
+  const bool target3_valid = target3_seen && id(target_3_range_valid);
   const int state_target_count = (target1_valid ? 1 : 0) + (target2_valid ? 1 : 0) + (target3_valid ? 1 : 0);
   const int state_moving_target_count =
     (target1_valid && fabsf(id(target_1_speed_raw).state) > id(dir_stationary_speed) ? 1 : 0) +
@@ -325,14 +411,127 @@
     id(target_1_filter_blocked) ||
     id(target_2_filter_blocked) ||
     id(target_3_filter_blocked);
+  const int still_confidence_enter = 60;
+  const int still_confidence_exit = 25;
+  const int still_live_gain = 14;
+  const int still_same_area_gain = 8;
+  const int still_missing_decay = 6;
+  const int still_moving_exit_decay = 18;
+  const int still_far_target_decay = 12;
+  const float still_same_area_radius_mm = 700.0f;
+  const uint32_t still_max_hold_ms = 120000;
+  const bool live_still_target = state_still_target_count > 0;
+  const bool live_moving_target = state_moving_target_count > 0;
+  float still_x = 0.0f;
+  float still_y = 0.0f;
+  bool still_coord_valid = false;
+  auto choose_still_target = [&](bool valid, float speed, float x, float y) {
+    if (still_coord_valid || !valid || fabsf(speed) > id(dir_stationary_speed)) return;
+    if (sqrtf(x * x + y * y) <= 100.0f) return;
+    still_x = x;
+    still_y = y;
+    still_coord_valid = true;
+  };
+  choose_still_target(target1_valid, id(target_1_speed_raw).state, id(target_1_x_raw).state, id(target_1_y_raw).state);
+  choose_still_target(target2_valid, id(target_2_speed_raw).state, id(target_2_x_raw).state, id(target_2_y_raw).state);
+  choose_still_target(target3_valid, id(target_3_speed_raw).state, id(target_3_x_raw).state, id(target_3_y_raw).state);
+  bool still_same_area = false;
+  if (still_coord_valid && id(diag_still_anchor_valid)) {
+    const float dx = still_x - id(diag_still_anchor_x);
+    const float dy = still_y - id(diag_still_anchor_y);
+    still_same_area = sqrtf(dx * dx + dy * dy) <= still_same_area_radius_mm;
+  }
+  int still_confidence = id(diag_still_confidence);
+  if (state_filter_blocked) {
+    still_confidence = 0;
+    id(diag_still_confirmed) = false;
+    id(diag_still_state) = "blocked";
+    id(diag_still_reason) = "filter_blocked";
+  } else if (live_still_target) {
+    id(diag_still_last_seen_ms) = now;
+    if (still_coord_valid) {
+      if (!id(diag_still_anchor_valid) || !still_same_area) {
+        id(diag_still_anchor_x) = still_x;
+        id(diag_still_anchor_y) = still_y;
+        id(diag_still_anchor_valid) = true;
+        id(diag_still_reason) = id(diag_still_confirmed) ? "anchor_moved" : "anchor_set";
+      } else {
+        id(diag_still_anchor_x) = id(diag_still_anchor_x) * 0.75f + still_x * 0.25f;
+        id(diag_still_anchor_y) = id(diag_still_anchor_y) * 0.75f + still_y * 0.25f;
+        id(diag_still_reason) = "same_area_still";
+      }
+    } else {
+      id(diag_still_reason) = "still_no_coord";
+    }
+    still_confidence += still_live_gain + (still_same_area ? still_same_area_gain : 0);
+    if (still_confidence > 100) still_confidence = 100;
+    if (still_confidence >= still_confidence_enter) {
+      id(diag_still_confirmed) = true;
+      id(diag_still_state) = "confirmed";
+    } else {
+      id(diag_still_state) = "candidate";
+    }
+  } else if (live_moving_target) {
+    still_confidence -= still_moving_exit_decay;
+    id(diag_still_reason) = "moving_target";
+    id(diag_still_state) = id(diag_still_confirmed) ? "moving_decay" : "idle";
+  } else if (state_target_count > 0) {
+    still_confidence -= still_far_target_decay;
+    id(diag_still_reason) = "non_still_target";
+    id(diag_still_state) = id(diag_still_confirmed) ? "target_decay" : "idle";
+  } else {
+    still_confidence -= still_missing_decay;
+    id(diag_still_reason) = "target_missing";
+    id(diag_still_state) = id(diag_still_confirmed) ? "holding" : "idle";
+  }
+  if (still_confidence < 0) still_confidence = 0;
+  id(diag_still_confidence) = still_confidence;
+  if (id(diag_still_confirmed) && still_confidence < still_confidence_exit) {
+    id(diag_still_confirmed) = false;
+    id(diag_still_state) = "lost";
+    id(diag_still_reason) = "confidence_expired";
+  }
+  if (id(diag_still_confirmed) && id(diag_still_last_seen_ms) > 0 &&
+      (now - id(diag_still_last_seen_ms)) > still_max_hold_ms) {
+    id(diag_still_confirmed) = false;
+    id(diag_still_state) = "lost";
+    id(diag_still_reason) = "max_hold_expired";
+  }
+  const bool state_still_hold_active =
+    id(diag_still_confirmed) &&
+    state_target_count == 0 &&
+    id(diag_still_last_seen_ms) > 0 &&
+    (now - id(diag_still_last_seen_ms)) <= still_max_hold_ms;
   const bool state_presence_raw =
     state_target_count > 0 ? true :
+    state_still_hold_active ? true :
     state_filter_blocked ? false :
     id(pir_motion).state;
   const bool state_motion_raw =
     state_moving_target_count > 0 ? true :
     state_filter_blocked ? false :
     id(pir_motion).state;
+  const char *state_presence_raw_reason =
+    state_target_count > 0 ? "target" :
+    state_still_hold_active ? "still_hold" :
+    state_filter_blocked ? "filter_blocked" :
+    id(pir_motion).state ? "pir" :
+    "none";
+  const char *state_motion_raw_reason =
+    state_moving_target_count > 0 ? "moving_target" :
+    state_filter_blocked ? "filter_blocked" :
+    id(pir_motion).state ? "pir" :
+    "none";
+  if (state_target_count > 0) {
+    id(diag_last_valid_target_ms) = now;
+    id(diag_empty_samples_consecutive) = 0;
+  } else if (id(diag_empty_samples_consecutive) < 1000000) {
+    id(diag_empty_samples_consecutive)++;
+  }
+  const bool diag_presence_before = id(diag_presence_previous_stable);
+  const bool diag_motion_before = id(diag_motion_previous_stable);
+  // 존재 감지는 즉시 켜고 늦게 끈다(깜빡임 방지). presence 3s, motion 0.5s 홀드.
+  // 이 비대칭은 의도된 것이며 사용자 체감 안정성을 위한 값이다.
   if (state_presence_raw) {
     id(state_presence_stable) = true;
     id(state_presence_last_on_ms) = now;
@@ -345,7 +544,37 @@
   } else if ((now - id(state_motion_last_on_ms)) >= 500) {
     id(state_motion_stable) = false;
   }
+  if (id(state_presence_stable) != diag_presence_before) {
+    if (id(state_presence_stable)) {
+      const uint32_t drop_ms = id(diag_last_presence_change_ms) == 0 ? 0 : now - id(diag_last_presence_change_ms);
+      id(diag_last_presence_drop_ms) = drop_ms;
+      if (drop_ms > 0 && drop_ms <= 10000) {
+        id(diag_short_presence_drop_count)++;
+      } else if (drop_ms >= 60000) {
+        id(diag_long_presence_drop_count)++;
+      }
+      id(diag_last_presence_reason) = state_presence_raw_reason;
+    } else {
+      id(diag_last_presence_off_reason) =
+        state_filter_blocked ? "filter_blocked" :
+        id(diag_still_reason) == "confidence_expired" ? "still_confidence_expired" :
+        id(diag_still_reason) == "max_hold_expired" ? "still_max_hold_expired" :
+        state_target_count == 0 ? "target_lost_hold_expired" :
+        "unknown";
+      id(diag_last_presence_reason) = id(diag_last_presence_off_reason);
+    }
+    id(diag_last_presence_change_ms) = now;
+  }
+  if (id(state_motion_stable) != diag_motion_before) {
+    id(diag_last_motion_reason) = id(state_motion_stable) ? state_motion_raw_reason : "motion_hold_expired";
+    id(diag_last_motion_change_ms) = now;
+  }
+  id(diag_presence_previous_stable) = id(state_presence_stable);
+  id(diag_motion_previous_stable) = id(state_motion_stable);
   const bool state_pir_motion_effective = id(pir_motion).state && !state_filter_blocked;
+  // === 섹션 4: 프론트엔드용 state JSON 직렬화 ===
+  // 현재 감지 상태, 타깃 좌표, 필터/보정 상태, 환경값을 웹 대시보드가 읽는 JSON으로 만든다.
+  // 필드명과 구조는 프론트엔드가 의존하므로 순서와 의미를 보존해야 한다.
   auto state_target_json = [](const char *id_name, const char *label, const char *color, float x, float y, bool active) -> std::string {
     std::string json = "{\"id\":\"";
     json += id_name;
@@ -398,9 +627,6 @@
     json += std::to_string(target_count);
     json += "}";
     return json;
-  };
-  auto state_target_active = [](const std::string &direction, bool filtered, float x, float y) -> bool {
-    return direction != "NA" && !filtered && sqrtf(x * x + y * y) > 100.0f;
   };
   auto append_state_float = [](std::string &json, const char *name, float value, const char *format) {
     json += ",\"";
@@ -488,18 +714,69 @@
   append_state_float(state_json, "temperatureC", id(temperature_corrected).state, "%.1f");
   append_state_float(state_json, "humidityPercent", id(humidity_corrected).state, "%.1f");
   append_state_float(state_json, "illuminanceLux", id(illuminance_lux).state, "%.0f");
+  state_json += ",\"debug\":{\"presenceReason\":\"";
+  state_json += id(diag_last_presence_reason);
+  state_json += "\",\"presenceOffReason\":\"";
+  state_json += id(diag_last_presence_off_reason);
+  state_json += "\",\"motionReason\":\"";
+  state_json += id(diag_last_motion_reason);
+  state_json += "\",\"lastPresenceDropMs\":";
+  state_json += std::to_string(id(diag_last_presence_drop_ms));
+  state_json += ",\"lastValidTargetAgeMs\":";
+  if (id(diag_last_valid_target_ms) == 0) {
+    state_json += "null";
+  } else {
+    state_json += std::to_string(now - id(diag_last_valid_target_ms));
+  }
+  state_json += ",\"emptySamplesConsecutive\":";
+  state_json += std::to_string(id(diag_empty_samples_consecutive));
+  state_json += ",\"shortPresenceDropCount\":";
+  state_json += std::to_string(id(diag_short_presence_drop_count));
+  state_json += ",\"longPresenceDropCount\":";
+  state_json += std::to_string(id(diag_long_presence_drop_count));
+  state_json += ",\"still\":{\"state\":\"";
+  state_json += id(diag_still_state);
+  state_json += "\",\"reason\":\"";
+  state_json += id(diag_still_reason);
+  state_json += "\",\"confidence\":";
+  state_json += std::to_string(id(diag_still_confidence));
+  state_json += ",\"holdActive\":";
+  state_json += state_still_hold_active ? "true" : "false";
+  state_json += ",\"lastSeenAgeMs\":";
+  if (id(diag_still_last_seen_ms) == 0) {
+    state_json += "null";
+  } else {
+    state_json += std::to_string(now - id(diag_still_last_seen_ms));
+  }
+  state_json += ",\"anchor\":";
+  if (!id(diag_still_anchor_valid)) {
+    state_json += "null";
+  } else {
+    state_json += "{\"x\":";
+    state_json += std::to_string((int) lroundf(id(diag_still_anchor_x)));
+    state_json += ",\"y\":";
+    state_json += std::to_string((int) lroundf(id(diag_still_anchor_y)));
+    state_json += "}";
+  }
+  state_json += "},\"range\":{\"reason\":\"";
+  state_json += id(diag_range_reason);
+  state_json += "\",\"suspectTargetCount\":";
+  state_json += std::to_string(id(diag_range_suspect_count));
+  state_json += ",\"outOfRangeTargetCount\":";
+  state_json += std::to_string(id(diag_range_out_of_range_count));
+  state_json += ",\"remoteCandidateCount\":";
+  state_json += std::to_string(id(diag_range_remote_candidate_count));
+  state_json += "}";
+  state_json += "}";
   state_json += ",\"targets\":[";
-  state_json += state_target_json("target_1", "T1", "#ff6b7a", id(target_1_x_display).state, id(target_1_y_display).state,
-                                  state_target_active(id(target_1_direction_raw).state, id(target_1_filtered),
-                                                      id(target_1_x_display).state, id(target_1_y_display).state));
+  state_json += state_target_json("target_1", "T1", "#ff6b7a", id(target_1_x_raw).state, id(target_1_y_raw).state,
+                                  target1_valid);
   state_json += ",";
-  state_json += state_target_json("target_2", "T2", "#ffd166", id(target_2_x_display).state, id(target_2_y_display).state,
-                                  state_target_active(id(target_2_direction_raw).state, id(target_2_filtered),
-                                                      id(target_2_x_display).state, id(target_2_y_display).state));
+  state_json += state_target_json("target_2", "T2", "#ffd166", id(target_2_x_raw).state, id(target_2_y_raw).state,
+                                  target2_valid);
   state_json += ",";
-  state_json += state_target_json("target_3", "T3", "#06d6a0", id(target_3_x_display).state, id(target_3_y_display).state,
-                                  state_target_active(id(target_3_direction_raw).state, id(target_3_filtered),
-                                                      id(target_3_x_display).state, id(target_3_y_display).state));
+  state_json += state_target_json("target_3", "T3", "#06d6a0", id(target_3_x_raw).state, id(target_3_y_raw).state,
+                                  target3_valid);
   state_json += "],\"zones\":[";
   bool first_state_zone = true;
   for (int zone_index = 1; zone_index <= 6; zone_index++) {
@@ -511,6 +788,9 @@
   state_json += "]}";
   id(radar_api).update_state_json(state_json);
   
+  // === 섹션 5: 일별 통계 롤오버 및 저장 ===
+  // SNTP 날짜 기준으로 오늘 통계를 갱신하고, 날짜가 바뀌면 전날 통계를 저장한 뒤 오늘 값을 초기화한다.
+  // 평소 프레임에서는 메모리의 today JSON만 갱신하고, flash 쓰기는 day_key 변경 시에만 수행한다.
   auto reset_today_stats = [&]() {
     id(today_calibration_filter_hits) = 0;
     id(today_calibration_reduced_hits) = 0;
@@ -572,12 +852,18 @@
       reset_today_stats();
       id(stats_current_day_key) = day_key;
       const std::string new_today_json = compact_day_stats_json(day_key);
+      // save_finished_stats_day는 flash에 쓰며 radar_storage의 write_payload 경로를 탄다.
+      // 이 저장은 자정 롤오버(day_key 변경) 시에만 실행되는 현 구조를 유지해야 한다.
+      // 매 프레임 호출로 바꾸면 진행 중인 청크 업로드와 저장 경합이 발생할 수 있다.
       id(radar_api).save_finished_stats_day(finished_day_json, new_today_json);
     } else {
       id(radar_api).update_today_stats_json(compact_day_stats_json(day_key));
     }
   }
   
+  // === 섹션 6: target 1/2/3 방향 상태 머신 ===
+  // 타깃 수를 안정화하고 각 타깃의 접근/멀어짐/정지 방향 상태를 히스테리시스로 확정한다.
+  // 저속은 정지로 간주하고, 타깃이 사라진 뒤에는 timeout 이후 방향 상태를 정지로 되돌린다.
   const bool has_target = id(ld2450_has_target).state;
   bool target_valid = false;
   
@@ -627,7 +913,8 @@
         }
       }
   
-      // Change direction only after N consecutive identical samples.
+      // 노이즈로 인한 방향 깜빡임을 막기 위한 히스테리시스.
+      // 방향은 N번 연속 동일 관측이어야 확정되며, 즉시 반영하면 값이 튄다.
       if (observed == id(dir_last_observed)) {
         id(dir_consecutive_count) = id(dir_consecutive_count) + 1;
         if (id(dir_consecutive_count) >= id(dir_consecutive_need)) {
@@ -716,6 +1003,9 @@
     }
   }
   
+  // === 섹션 7: 제어 요청 반영 및 LED 자동 제어 ===
+  // 웹 대시보드에서 들어온 상태 LED, 보정, 온습도 오프셋 요청을 ESPHome 컴포넌트에 반영한다.
+  // 이후 현재 제어 상태를 API에 갱신하고, 재실 상태에 따라 상태 LED 점멸을 자동 제어한다.
   bool requested_status_led_enabled = false;
   if (id(radar_api).take_status_led_request(&requested_status_led_enabled)) {
     if (requested_status_led_enabled) {

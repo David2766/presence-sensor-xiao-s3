@@ -1,6 +1,6 @@
 {
-  "firmware": "0.5.3",
-  "dashboard": "0.4.0-x",
+  "firmware": "0.5.3-c",
+  "dashboard": "0.4.1-a",
   "configSchema": 1,
   "floorplanSchema": 1,
   "statsSchema": 1

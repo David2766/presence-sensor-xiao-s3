@@ -36,7 +36,7 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 1s
     lambda: |-
-      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered)) {
+      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return {"미감지"};
       }
       return id(dir_stable_value);
@@ -46,7 +46,7 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 1s
     lambda: |-
-      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered)) {
+      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return {"미감지"};
       }
       return id(dir2_stable_value);
@@ -56,7 +56,7 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 1s
     lambda: |-
-      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered)) {
+      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return {"미감지"};
       }
       return id(dir3_stable_value);
@@ -67,3 +67,43 @@ text_sensor:
     update_interval: 3s
     lambda: |-
       return id(dir_preset_name);
+  - platform: template
+    name: "Presence Debug Reason"
+    id: presence_debug_reason
+    entity_category: diagnostic
+    update_interval: 2s
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_last_presence_reason);
+  - platform: template
+    name: "Presence Debug Off Reason"
+    id: presence_debug_off_reason
+    entity_category: diagnostic
+    update_interval: 2s
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_last_presence_off_reason);
+  - platform: template
+    name: "Motion Debug Reason"
+    id: motion_debug_reason
+    entity_category: diagnostic
+    update_interval: 2s
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_last_motion_reason);
+  - platform: template
+    name: "Still Debug State"
+    id: still_debug_state
+    entity_category: diagnostic
+    update_interval: 2s
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_still_state);
+  - platform: template
+    name: "Still Debug Reason"
+    id: still_debug_reason
+    entity_category: diagnostic
+    update_interval: 2s
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_still_reason);

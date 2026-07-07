@@ -141,9 +141,9 @@ sensor:
     accuracy_decimals: 0
     lambda: |-
       int count = 0;
-      if (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && fabsf(id(target_1_speed_raw).state) <= id(dir_stationary_speed)) count++;
-      if (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && fabsf(id(target_2_speed_raw).state) <= id(dir_stationary_speed)) count++;
-      if (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && fabsf(id(target_3_speed_raw).state) <= id(dir_stationary_speed)) count++;
+      if (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) <= id(dir_stationary_speed)) count++;
+      if (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) <= id(dir_stationary_speed)) count++;
+      if (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && id(target_3_range_valid) && fabsf(id(target_3_speed_raw).state) <= id(dir_stationary_speed)) count++;
       return count;
   - platform: template
     name: "Moving Target Count"
@@ -153,9 +153,9 @@ sensor:
     accuracy_decimals: 0
     lambda: |-
       int count = 0;
-      if (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && fabsf(id(target_1_speed_raw).state) > id(dir_stationary_speed)) count++;
-      if (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && fabsf(id(target_2_speed_raw).state) > id(dir_stationary_speed)) count++;
-      if (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && fabsf(id(target_3_speed_raw).state) > id(dir_stationary_speed)) count++;
+      if (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) > id(dir_stationary_speed)) count++;
+      if (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) > id(dir_stationary_speed)) count++;
+      if (id(target_3_direction_raw).state != "NA" && !id(target_3_filtered) && id(target_3_range_valid) && fabsf(id(target_3_speed_raw).state) > id(dir_stationary_speed)) count++;
       return count;
   - platform: template
     name: "Detection Zone Count"
@@ -172,9 +172,67 @@ sensor:
     entity_category: diagnostic
     update_interval: 5s
     accuracy_decimals: 0
-    disabled_by_default: true
+    disabled_by_default: false
     lambda: |-
       return id(software_filter_zone_count_state);
+  - platform: template
+    name: "Presence Debug Last Target Age"
+    id: presence_debug_last_target_age
+    entity_category: diagnostic
+    unit_of_measurement: "s"
+    update_interval: 2s
+    accuracy_decimals: 1
+    disabled_by_default: false
+    lambda: |-
+      const uint32_t now = millis();
+      if (id(diag_last_valid_target_ms) == 0) return NAN;
+      return (now - id(diag_last_valid_target_ms)) / 1000.0f;
+  - platform: template
+    name: "Presence Debug Empty Samples"
+    id: presence_debug_empty_samples
+    entity_category: diagnostic
+    update_interval: 2s
+    accuracy_decimals: 0
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_empty_samples_consecutive);
+  - platform: template
+    name: "Presence Debug Last Drop"
+    id: presence_debug_last_drop
+    entity_category: diagnostic
+    unit_of_measurement: "s"
+    update_interval: 2s
+    accuracy_decimals: 1
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_last_presence_drop_ms) / 1000.0f;
+  - platform: template
+    name: "Presence Debug Short Drops"
+    id: presence_debug_short_drops
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_short_presence_drop_count);
+  - platform: template
+    name: "Presence Debug Long Drops"
+    id: presence_debug_long_drops
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_long_presence_drop_count);
+  - platform: template
+    name: "Still Debug Confidence"
+    id: still_debug_confidence
+    entity_category: diagnostic
+    update_interval: 2s
+    accuracy_decimals: 0
+    disabled_by_default: false
+    lambda: |-
+      return id(diag_still_confidence);
   - platform: template
     id: target_1_x_display
     entity_category: diagnostic
@@ -183,7 +241,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered)) {
+      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
       return id(target_1_x_raw).state;
@@ -195,7 +253,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered)) {
+      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
       return id(target_1_y_raw).state;
@@ -207,7 +265,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered)) {
+      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
       return id(target_1_speed_raw).state;
@@ -219,7 +277,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered)) {
+      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
       return id(target_1_angle_raw).state;
@@ -231,7 +289,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered)) {
+      if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
       return id(target_1_distance_raw).state;
@@ -245,7 +303,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered)) {
+      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
       return id(target_2_x_raw).state;
@@ -257,7 +315,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered)) {
+      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
       return id(target_2_y_raw).state;
@@ -269,7 +327,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered)) {
+      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
       return id(target_2_speed_raw).state;
@@ -281,7 +339,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered)) {
+      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
       return id(target_2_angle_raw).state;
@@ -293,7 +351,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered)) {
+      if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
       return id(target_2_distance_raw).state;
@@ -307,7 +365,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered)) {
+      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
       return id(target_3_x_raw).state;
@@ -319,7 +377,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered)) {
+      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
       return id(target_3_y_raw).state;
@@ -331,7 +389,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered)) {
+      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
       return id(target_3_speed_raw).state;
@@ -343,7 +401,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered)) {
+      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
       return id(target_3_angle_raw).state;
@@ -355,7 +413,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
-      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered)) {
+      if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
       return id(target_3_distance_raw).state;
