@@ -1,20 +1,20 @@
 binary_sensor:
   - platform: template
-    name: "01. 재실"
+    name: "01. Presence"
     id: presence_combined
     device_class: occupancy
     lambda: |-
       return id(state_presence_stable);
 
   - platform: template
-    name: "02. 움직임"
+    name: "02. Motion"
     id: motion_combined
     device_class: motion
     lambda: |-
       return id(state_motion_stable);
 
   - platform: template
-    name: "03. 이동 중인 대상"
+    name: "03. Moving Target"
     id: moving_target_filtered
     device_class: motion
     lambda: |-
@@ -30,7 +30,7 @@ binary_sensor:
       - delayed_off: 1s
 
   - platform: template
-    name: "04. 멈춰있는 대상"
+    name: "04. Stationary Target"
     id: still_target_filtered
     device_class: occupancy
     lambda: |-
@@ -46,7 +46,7 @@ binary_sensor:
       - delayed_off: 1s
 
   - platform: template
-    name: "09. 구역 1 감지"
+    name: "09. Zone 1 Presence"
     id: software_zone_1_presence
     device_class: occupancy
     lambda: |-
@@ -55,7 +55,7 @@ binary_sensor:
       - delayed_off: 1s
 
   - platform: template
-    name: "10. 구역 2 감지"
+    name: "10. Zone 2 Presence"
     id: software_zone_2_presence
     device_class: occupancy
     lambda: |-
@@ -64,7 +64,7 @@ binary_sensor:
       - delayed_off: 1s
 
   - platform: template
-    name: "11. 구역 3 감지"
+    name: "11. Zone 3 Presence"
     id: software_zone_3_presence
     device_class: occupancy
     lambda: |-
@@ -73,7 +73,7 @@ binary_sensor:
       - delayed_off: 1s
 
   - platform: template
-    name: "12. 구역 4 감지"
+    name: "12. Zone 4 Presence"
     id: software_zone_4_presence
     device_class: occupancy
     lambda: |-
@@ -82,7 +82,7 @@ binary_sensor:
       - delayed_off: 1s
 
   - platform: template
-    name: "13. 구역 5 감지"
+    name: "13. Zone 5 Presence"
     id: software_zone_5_presence
     device_class: occupancy
     lambda: |-
@@ -91,7 +91,7 @@ binary_sensor:
       - delayed_off: 1s
 
   - platform: template
-    name: "14. 구역 6 감지"
+    name: "14. Zone 6 Presence"
     id: software_zone_6_presence
     device_class: occupancy
     lambda: |-
@@ -101,7 +101,7 @@ binary_sensor:
 
 sensor:
   - platform: template
-    name: "05. 대상 수"
+    name: "05. Target Count"
     id: target_count_stable
     update_interval: 500ms
     accuracy_decimals: 0
@@ -114,7 +114,7 @@ sensor:
       return id(cnt_stable_total);
 
   - platform: template
-    name: "06. 온도"
+    name: "06. Temperature"
     id: temperature_corrected
     device_class: temperature
     state_class: measurement
@@ -132,7 +132,7 @@ sensor:
       return 0.95f * raw + 0.42f + id(temperature_user_offset).state;
 
   - platform: template
-    name: "07. 습도"
+    name: "07. Humidity"
     id: humidity_corrected
     device_class: humidity
     state_class: measurement
@@ -157,7 +157,7 @@ sensor:
       return corrected;
 
   - platform: bh1750
-    name: "08. 밝기"
+    name: "08. Illuminance"
     id: illuminance_lux
     address: 0x23
     update_interval: 5s

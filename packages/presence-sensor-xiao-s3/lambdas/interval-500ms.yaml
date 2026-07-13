@@ -721,7 +721,7 @@
     timezone_call.perform();
   }
 
-  const std::string active_timezone = id(device_timezone).state;
+  const std::string active_timezone = id(device_timezone).current_option().str();
   if (!active_timezone.empty() && active_timezone != id(timezone_applied_id)) {
     const char *posix_timezone = esphome::radar_api_server::timezone_posix(active_timezone.c_str());
     if (posix_timezone != nullptr) {
@@ -791,25 +791,25 @@
     }
   
     if ((now - id(dir_last_seen_ms)) > (uint32_t) id(dir_target_lost_timeout_ms)) {
-      id(dir_stable_value) = "정지";
+      id(dir_stable_value) = "Stationary";
       id(dir_consecutive_count) = 0;
-      id(dir_last_observed) = "정지";
+      id(dir_last_observed) = "Stationary";
     } else if (!isnan(id(target_1_speed_raw).state)) {
       const float speed_abs = fabsf(id(target_1_speed_raw).state);
-      std::string observed = "정지";
+      std::string observed = "Stationary";
       const std::string raw = id(target_1_direction_raw).state;
   
       if (speed_abs <= id(dir_stationary_speed)) {
         // Low speed is treated as stationary.
-        observed = "정지";
+        observed = "Stationary";
       } else {
         // Use raw direction for medium and high speed targets.
         if (raw == "Approaching") {
-          observed = "접근";
+          observed = "Approaching";
         } else if (raw == "Moving away") {
-          observed = "멀어짐";
+          observed = "Moving Away";
         } else {
-          observed = "정지";
+          observed = "Stationary";
         }
       }
   
@@ -832,23 +832,23 @@
     }
   
     if ((now - id(dir2_last_seen_ms)) > (uint32_t) id(dir_target_lost_timeout_ms)) {
-      id(dir2_stable_value) = "정지";
+      id(dir2_stable_value) = "Stationary";
       id(dir2_consecutive_count) = 0;
-      id(dir2_last_observed) = "정지";
+      id(dir2_last_observed) = "Stationary";
     } else if (!isnan(id(target_2_speed_raw).state)) {
       const float speed2_abs = fabsf(id(target_2_speed_raw).state);
-      std::string observed2 = "정지";
+      std::string observed2 = "Stationary";
       const std::string raw2 = id(target_2_direction_raw).state;
   
       if (speed2_abs <= id(dir_stationary_speed)) {
-        observed2 = "정지";
+        observed2 = "Stationary";
       } else {
         if (raw2 == "Approaching") {
-          observed2 = "접근";
+          observed2 = "Approaching";
         } else if (raw2 == "Moving away") {
-          observed2 = "멀어짐";
+          observed2 = "Moving Away";
         } else {
-          observed2 = "정지";
+          observed2 = "Stationary";
         }
       }
   
@@ -870,23 +870,23 @@
     }
   
     if ((now - id(dir3_last_seen_ms)) > (uint32_t) id(dir_target_lost_timeout_ms)) {
-      id(dir3_stable_value) = "정지";
+      id(dir3_stable_value) = "Stationary";
       id(dir3_consecutive_count) = 0;
-      id(dir3_last_observed) = "정지";
+      id(dir3_last_observed) = "Stationary";
     } else if (!isnan(id(target_3_speed_raw).state)) {
       const float speed3_abs = fabsf(id(target_3_speed_raw).state);
-      std::string observed3 = "정지";
+      std::string observed3 = "Stationary";
       const std::string raw3 = id(target_3_direction_raw).state;
   
       if (speed3_abs <= id(dir_stationary_speed)) {
-        observed3 = "정지";
+        observed3 = "Stationary";
       } else {
         if (raw3 == "Approaching") {
-          observed3 = "접근";
+          observed3 = "Approaching";
         } else if (raw3 == "Moving away") {
-          observed3 = "멀어짐";
+          observed3 = "Moving Away";
         } else {
-          observed3 = "정지";
+          observed3 = "Stationary";
         }
       }
   
@@ -951,7 +951,7 @@
       id(environment_correction_enable_switch).state,
       id(temperature_user_offset).state,
       id(humidity_user_offset).state,
-      id(device_timezone).state);
+      id(device_timezone).current_option().str());
 
   // LED auto control logic
   const bool presence = id(presence_combined).state;

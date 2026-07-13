@@ -1,0 +1,2 @@
+f851b4c1265cdf7817b31e5d728544aa6785d39960ecba30e8861aa894a474ab  presence-sensor-xiao-s3-v0.5.4-factory.bin
+c89ebe3285b81bbaf81e58998936809187c13ab4f874fbc41892bd46bae632e0  presence-sensor-xiao-s3-v0.5.4-ota.bin

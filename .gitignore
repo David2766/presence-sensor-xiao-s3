@@ -15,9 +15,17 @@ secrets.yaml
 **/.pio/
 **/.pioenvs/
 **/.piolibdeps/
+**/__pycache__/
+*.pyc
+*.obj
+*.o
+*.exe
 *.elf
 *.map
 *.log
 *.bak
+tools/presence-replay/native/_*.cmd
+tools/presence-replay/native/tracker_runner
+tools/presence-replay/native/tracker_tests
 .DS_Store
 Thumbs.db

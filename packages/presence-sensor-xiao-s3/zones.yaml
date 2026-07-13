@@ -110,7 +110,7 @@ globals:
 
 binary_sensor:
   - platform: template
-    name: "구역 설정됨"
+    name: "Zones Configured"
     id: custom_zone_configured
     lambda: |-
       return id(software_zone_configured_state);
@@ -119,7 +119,7 @@ binary_sensor:
 
 sensor:
   - platform: template
-    name: "구역 1 대상 수"
+    name: "Zone 1 Target Count"
     id: software_zone_1_target_count
     entity_category: diagnostic
     update_interval: 500ms
@@ -127,7 +127,7 @@ sensor:
     lambda: |-
       return id(software_zone_1_target_count_state);
   - platform: template
-    name: "구역 2 대상 수"
+    name: "Zone 2 Target Count"
     id: software_zone_2_target_count
     entity_category: diagnostic
     update_interval: 500ms
@@ -135,7 +135,7 @@ sensor:
     lambda: |-
       return id(software_zone_2_target_count_state);
   - platform: template
-    name: "구역 3 대상 수"
+    name: "Zone 3 Target Count"
     id: software_zone_3_target_count
     entity_category: diagnostic
     update_interval: 500ms
@@ -143,7 +143,7 @@ sensor:
     lambda: |-
       return id(software_zone_3_target_count_state);
   - platform: template
-    name: "구역 4 대상 수"
+    name: "Zone 4 Target Count"
     id: software_zone_4_target_count
     entity_category: diagnostic
     update_interval: 500ms
@@ -152,7 +152,7 @@ sensor:
     lambda: |-
       return id(software_zone_4_target_count_state);
   - platform: template
-    name: "구역 5 대상 수"
+    name: "Zone 5 Target Count"
     id: software_zone_5_target_count
     entity_category: diagnostic
     update_interval: 500ms
@@ -161,7 +161,7 @@ sensor:
     lambda: |-
       return id(software_zone_5_target_count_state);
   - platform: template
-    name: "구역 6 대상 수"
+    name: "Zone 6 Target Count"
     id: software_zone_6_target_count
     entity_category: diagnostic
     update_interval: 500ms
@@ -174,41 +174,41 @@ sensor:
 
 text:
   - platform: template
-    name: "구역 1 이름"
+    name: "Zone 1 Name"
     id: zone_1_name
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: "구역 1"
+    initial_value: "Zone 1"
     min_length: 0
     max_length: 32
     mode: text
   - platform: template
-    name: "구역 2 이름"
+    name: "Zone 2 Name"
     id: zone_2_name
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: "구역 2"
+    initial_value: "Zone 2"
     min_length: 0
     max_length: 32
     mode: text
   - platform: template
-    name: "구역 3 이름"
+    name: "Zone 3 Name"
     id: zone_3_name
     entity_category: config
     optimistic: true
     restore_value: true
-    initial_value: "구역 3"
+    initial_value: "Zone 3"
     min_length: 0
     max_length: 32
     mode: text
 
 text_sensor:
   - platform: template
-    name: "구역 요약"
+    name: "Zone Summary"
     id: zone_summary
     entity_category: diagnostic
     update_interval: 5s
     lambda: |-
-      return std::string("탐지 ") + std::to_string(id(software_detection_zone_count_state)) + " / 필터 " + std::to_string(id(software_filter_zone_count_state));
+      return std::string("Detection ") + std::to_string(id(software_detection_zone_count_state)) + " / Filter " + std::to_string(id(software_filter_zone_count_state));

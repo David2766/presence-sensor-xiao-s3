@@ -136,24 +136,22 @@ Later metrics can borrow ideas from multi-object tracking evaluation:
 
 ## 4. Replay Tool Shape
 
-The first PC tool can be written in Python.
-
-Planned location:
+The PC replay and native tracker tools live under:
 
 ```text
 tools/presence-replay/
 ```
 
-Planned commands:
+Available commands:
 
 ```text
 python tools/presence-replay/replay.py logs/replay.ndjson --truth logs/truth.json
-python tools/presence-replay/simulate.py scenarios/seated_10min.json --seed 1
-python tools/presence-replay/montecarlo.py scenarios/seated_10min.json --runs 200
+python tools/presence-replay/native/test.py
+python tools/presence-replay/native/build.py
 ```
 
-The first version should focus on scoring existing firmware outputs. It does
-not need to perfectly reimplement the firmware tracker immediately.
+`replay.py` scores existing firmware output. The native commands compile the
+tracker runner and unit tests with `cl`, `g++`, or `clang++`.
 
 Later versions can compare multiple tracker candidates:
 

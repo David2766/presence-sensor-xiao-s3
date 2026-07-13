@@ -14,7 +14,7 @@ globals:
   - id: dir_stable_value
     type: std::string
     restore_value: no
-    initial_value: '"정지"'
+    initial_value: '"Stationary"'
   - id: dir_preset_name
     type: std::string
     restore_value: yes
@@ -30,7 +30,7 @@ globals:
   - id: dir_last_observed
     type: std::string
     restore_value: no
-    initial_value: '"정지"'
+    initial_value: '"Stationary"'
   - id: cnt_zero_hold_ms
     type: int
     restore_value: yes
@@ -218,7 +218,7 @@ globals:
   - id: dir2_stable_value
     type: std::string
     restore_value: no
-    initial_value: '"정지"'
+    initial_value: '"Stationary"'
   - id: dir2_consecutive_count
     type: int
     restore_value: no
@@ -226,7 +226,7 @@ globals:
   - id: dir2_last_observed
     type: std::string
     restore_value: no
-    initial_value: '"정지"'
+    initial_value: '"Stationary"'
   - id: dir3_last_seen_ms
     type: uint32_t
     restore_value: no
@@ -234,7 +234,7 @@ globals:
   - id: dir3_stable_value
     type: std::string
     restore_value: no
-    initial_value: '"정지"'
+    initial_value: '"Stationary"'
   - id: dir3_consecutive_count
     type: int
     restore_value: no
@@ -242,7 +242,7 @@ globals:
   - id: dir3_last_observed
     type: std::string
     restore_value: no
-    initial_value: '"정지"'
+    initial_value: '"Stationary"'
   - id: led_blink_end_ms
     type: uint32_t
     restore_value: no

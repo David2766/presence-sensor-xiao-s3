@@ -11,6 +11,9 @@
     "generate:setup-i18n": "node scripts/generate-setup-page-i18n.mjs",
     "check:setup-i18n": "node scripts/generate-setup-page-i18n.mjs --check",
     "dev:web": "npm run generate:setup-i18n && vite --mode web",
+    "test": "npm run check:setup-i18n && vitest run",
+    "test:native": "python ../tools/presence-replay/native/test.py",
+    "test:watch": "vitest",
     "typecheck": "npm run check:setup-i18n && tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,css}\" \"*.{json,ts}\""
   },

@@ -131,24 +131,22 @@ Compact row 예시:
 
 ## 4. 리플레이 도구 형태
 
-첫 PC 도구는 Python으로 시작해도 된다.
-
-계획 위치:
+PC 리플레이 및 네이티브 트래커 도구는 다음 경로에 있다.
 
 ```text
 tools/presence-replay/
 ```
 
-계획 명령:
+현재 사용할 수 있는 명령:
 
 ```text
 python tools/presence-replay/replay.py logs/replay.ndjson --truth logs/truth.json
-python tools/presence-replay/simulate.py scenarios/seated_10min.json --seed 1
-python tools/presence-replay/montecarlo.py scenarios/seated_10min.json --runs 200
+python tools/presence-replay/native/test.py
+python tools/presence-replay/native/build.py
 ```
 
-첫 버전은 기존 펌웨어 출력 점수화에 집중한다. 펌웨어 tracker를 완전히 다시
-구현할 필요는 없다.
+`replay.py`는 기존 펌웨어 출력을 점수화한다. 네이티브 명령은 `cl`, `g++`,
+`clang++` 중 하나를 사용해 트래커 실행기와 단위 테스트를 컴파일한다.
 
 나중에는 여러 tracker 후보를 비교할 수 있다.
 

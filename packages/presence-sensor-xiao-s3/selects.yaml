@@ -63,10 +63,10 @@ select:
           }
           // Reset direction counters.
           id(dir_consecutive_count) = 0;
-          id(dir_last_observed) = "정지";
+          id(dir_last_observed) = "Stationary";
           id(dir2_consecutive_count) = 0;
-          id(dir2_last_observed) = "정지";
+          id(dir2_last_observed) = "Stationary";
           id(dir3_consecutive_count) = 0;
-          id(dir3_last_observed) = "정지";
+          id(dir3_last_observed) = "Stationary";
 
 # Device control buttons

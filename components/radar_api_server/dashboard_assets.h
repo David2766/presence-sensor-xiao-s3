@@ -9,8 +9,8 @@ namespace esphome {
 namespace radar_api_server {
 namespace dashboard_assets {
 
-inline constexpr const char *FIRMWARE_VERSION = "0.5.3-v";
-inline constexpr const char *DASHBOARD_VERSION = "0.4.3-t";
+inline constexpr const char *FIRMWARE_VERSION = "0.5.4";
+inline constexpr const char *DASHBOARD_VERSION = "0.4.3-w";
 inline constexpr int CONFIG_SCHEMA_VERSION = 1;
 inline constexpr int FLOORPLAN_SCHEMA_VERSION = 1;
 inline constexpr int STATS_SCHEMA_VERSION = 1;

@@ -244,7 +244,7 @@ sensor:
   - platform: template
     id: target_1_x_display
     entity_category: diagnostic
-    name: "타겟1 X"
+    name: "Target 1 X"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -260,7 +260,7 @@ sensor:
   - platform: template
     id: target_1_y_display
     entity_category: diagnostic
-    name: "타겟1 Y"
+    name: "Target 1 Y"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -276,7 +276,7 @@ sensor:
   - platform: template
     id: target_1_speed_display
     entity_category: diagnostic
-    name: "타겟1 Speed"
+    name: "Target 1 Speed"
     unit_of_measurement: "cm/s"
     accuracy_decimals: 0
     update_interval: 2s
@@ -292,7 +292,7 @@ sensor:
   - platform: template
     id: target_1_angle_display
     entity_category: diagnostic
-    name: "타겟1 Angle"
+    name: "Target 1 Angle"
     unit_of_measurement: "°"
     accuracy_decimals: 0
     update_interval: 2s
@@ -310,7 +310,7 @@ sensor:
   - platform: template
     id: target_1_distance_display
     entity_category: diagnostic
-    name: "타겟1 Distance"
+    name: "Target 1 Distance"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -328,7 +328,7 @@ sensor:
   - platform: template
     id: target_2_x_display
     entity_category: diagnostic
-    name: "타겟2 X"
+    name: "Target 2 X"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -344,7 +344,7 @@ sensor:
   - platform: template
     id: target_2_y_display
     entity_category: diagnostic
-    name: "타겟2 Y"
+    name: "Target 2 Y"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -360,7 +360,7 @@ sensor:
   - platform: template
     id: target_2_speed_display
     entity_category: diagnostic
-    name: "타겟2 Speed"
+    name: "Target 2 Speed"
     unit_of_measurement: "cm/s"
     accuracy_decimals: 0
     update_interval: 2s
@@ -376,7 +376,7 @@ sensor:
   - platform: template
     id: target_2_angle_display
     entity_category: diagnostic
-    name: "타겟2 Angle"
+    name: "Target 2 Angle"
     unit_of_measurement: "°"
     accuracy_decimals: 0
     update_interval: 2s
@@ -394,7 +394,7 @@ sensor:
   - platform: template
     id: target_2_distance_display
     entity_category: diagnostic
-    name: "타겟2 Distance"
+    name: "Target 2 Distance"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -412,7 +412,7 @@ sensor:
   - platform: template
     id: target_3_x_display
     entity_category: diagnostic
-    name: "타겟3 X"
+    name: "Target 3 X"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -428,7 +428,7 @@ sensor:
   - platform: template
     id: target_3_y_display
     entity_category: diagnostic
-    name: "타겟3 Y"
+    name: "Target 3 Y"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
@@ -444,7 +444,7 @@ sensor:
   - platform: template
     id: target_3_speed_display
     entity_category: diagnostic
-    name: "타겟3 Speed"
+    name: "Target 3 Speed"
     unit_of_measurement: "cm/s"
     accuracy_decimals: 0
     update_interval: 2s
@@ -460,7 +460,7 @@ sensor:
   - platform: template
     id: target_3_angle_display
     entity_category: diagnostic
-    name: "타겟3 Angle"
+    name: "Target 3 Angle"
     unit_of_measurement: "°"
     accuracy_decimals: 0
     update_interval: 2s
@@ -478,7 +478,7 @@ sensor:
   - platform: template
     id: target_3_distance_display
     entity_category: diagnostic
-    name: "타겟3 Distance"
+    name: "Target 3 Distance"
     unit_of_measurement: "mm"
     accuracy_decimals: 0
     update_interval: 2s
