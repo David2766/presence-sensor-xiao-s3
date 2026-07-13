@@ -17,7 +17,7 @@ let tesseractLoadPromise: Promise<any> | null = null;
 
 export class FloorplanOcrCancelledError extends Error {
   constructor() {
-    super("OCR 작업이 취소되었습니다.");
+    super("ocr_cancelled");
     this.name = "FloorplanOcrCancelledError";
   }
 }
@@ -26,6 +26,31 @@ export type FloorplanOcrProgress = {
   status: string;
   progress: number;
   message: string;
+};
+
+export type FloorplanOcrMessages = {
+  cancelled: string;
+  engineLoading: string;
+  detectingText: string;
+  noTextRegions: string;
+  preparingWorker: (regions: number) => string;
+  recognizingRegion: (index: number, total: number) => string;
+  recognizingRegionRotation: (index: number, total: number, rotationIndex: number, rotations: number) => string;
+  mergingResults: string;
+  done: string;
+  tesseractMissing: string;
+  tesseractCdnFailed: string;
+  imageDataFailed: string;
+  cropCanvasFailed: string;
+  cropScaleFailed: string;
+  cropPngFailed: string;
+  cropRotateFailed: string;
+  statusLoadingCore: string;
+  statusInitializingEngine: string;
+  statusLoadingLanguage: string;
+  statusInitializingApi: string;
+  statusRecognizingText: string;
+  statusWorking: string;
 };
 
 export type FloorplanOcrWord = {
@@ -108,6 +133,7 @@ export type FloorplanOcrJob = {
 
 export type FloorplanOcrOptions = {
   roomCandidates?: RoomCandidate[];
+  messages: FloorplanOcrMessages;
 };
 
 type TesseractWindow = Window & {
@@ -117,8 +143,9 @@ type TesseractWindow = Window & {
 export function createFloorplanOcrJob(
   image: Blob,
   onProgress: (progress: FloorplanOcrProgress) => void,
-  options: FloorplanOcrOptions = {}
+  options: FloorplanOcrOptions
 ): FloorplanOcrJob {
+  const messages = options.messages;
   let cancelled = false;
   let worker: any = null;
   let lastProgress = 0;
@@ -150,17 +177,17 @@ export function createFloorplanOcrJob(
     emitProgress({
       status: "engine",
       progress: 0.02,
-      message: "OCR 엔진을 불러오는 중입니다."
+      message: messages.engineLoading
     });
-    const Tesseract = await loadTesseract();
+    const Tesseract = await loadTesseract(messages);
     if (cancelled) throw new FloorplanOcrCancelledError();
 
     emitProgress({
       status: "text-detect",
       progress: OCR_PROGRESS_ENGINE_READY,
-      message: "텍스트 후보 영역을 찾는 중입니다."
+      message: messages.detectingText
     });
-    const imageData = await readImageData(image);
+    const imageData = await readImageData(image, messages);
     const roomCandidates = options.roomCandidates ?? [];
     const textDetection = detectFloorplanTextBoxes(imageData, {
       relaxedAreas: roomCandidates
@@ -172,7 +199,7 @@ export function createFloorplanOcrJob(
       emitProgress({
         status: "done",
         progress: 1,
-        message: "텍스트 후보 영역을 찾지 못했습니다."
+        message: messages.noTextRegions
       });
       return emptyOcrResult(
         textDetection.debug.rawBoxes,
@@ -192,14 +219,14 @@ export function createFloorplanOcrJob(
     emitProgress({
       status: "worker",
       progress: OCR_PROGRESS_TEXT_DETECTED,
-      message: `OCR Worker를 준비하는 중입니다. OCR 영역 ${regions.length}개를 인식합니다.`
+      message: messages.preparingWorker(regions.length)
     });
     worker = await Tesseract.createWorker("kor+eng", 1, {
       workerPath: TESSERACT_WORKER_PATH,
       corePath: TESSERACT_CORE_PATH,
       langPath: TESSERACT_LANG_PATH,
       logger: (message: any) => {
-        emitProgress(normalizeProgressMessage(message, activeOcrUnit, totalOcrUnits));
+        emitProgress(normalizeProgressMessage(message, activeOcrUnit, totalOcrUnits, messages));
       }
     });
     if (cancelled) throw new FloorplanOcrCancelledError();
@@ -222,21 +249,22 @@ export function createFloorplanOcrJob(
       emitProgress({
         status: "recognize",
         progress: ocrUnitProgress(completedOcrUnits, totalOcrUnits, 0),
-        message: `텍스트 후보 ${index + 1}/${regions.length} 영역을 인식하는 중입니다.`
+        message: messages.recognizingRegion(index + 1, regions.length)
       });
       const normalized = await recognizeRegion(
         worker,
         imageData,
         region,
         index + 1,
+        messages,
         (rotationIndex) => {
           activeOcrUnit = completedOcrUnits + rotationIndex;
           emitProgress({
             status: "recognize",
             progress: ocrUnitProgress(activeOcrUnit, totalOcrUnits, 0),
             message: rotations.length > 1
-              ? `텍스트 후보 ${index + 1}/${regions.length} 영역을 인식하는 중입니다. (${rotationIndex + 1}/${rotations.length})`
-              : `텍스트 후보 ${index + 1}/${regions.length} 영역을 인식하는 중입니다.`
+              ? messages.recognizingRegionRotation(index + 1, regions.length, rotationIndex + 1, rotations.length)
+              : messages.recognizingRegion(index + 1, regions.length)
           });
         }
       );
@@ -255,14 +283,14 @@ export function createFloorplanOcrJob(
     emitProgress({
       status: "merge",
       progress: OCR_PROGRESS_RECOGNIZE_DONE,
-      message: "OCR 결과를 정리하는 중입니다."
+      message: messages.mergingResults
     });
     await worker.terminate();
     worker = null;
     emitProgress({
       status: "done",
       progress: 1,
-      message: "OCR 분석이 완료되었습니다."
+      message: messages.done
     });
 
     return mergeOcrResults(cropResults, {
@@ -297,7 +325,7 @@ export function createFloorplanOcrJob(
   return { promise, cancel };
 }
 
-async function loadTesseract() {
+async function loadTesseract(messages: FloorplanOcrMessages) {
   const existing = (window as TesseractWindow).Tesseract;
   if (existing) return existing;
   if (!tesseractLoadPromise) {
@@ -310,10 +338,10 @@ async function loadTesseract() {
         if (loaded) {
           resolve(loaded);
         } else {
-          reject(new Error("Tesseract.js를 불러왔지만 OCR 객체를 찾지 못했습니다."));
+          reject(new Error(messages.tesseractMissing));
         }
       };
-      script.onerror = () => reject(new Error("Tesseract.js CDN 로딩에 실패했습니다."));
+      script.onerror = () => reject(new Error(messages.tesseractCdnFailed));
       document.head.appendChild(script);
     });
   }
@@ -323,7 +351,8 @@ async function loadTesseract() {
 function normalizeProgressMessage(
   message: any,
   activeOcrUnit = -1,
-  totalOcrUnits = 1
+  totalOcrUnits = 1,
+  messages: FloorplanOcrMessages
 ): FloorplanOcrProgress {
   const rawStatus = String(message?.status ?? "working");
   const localProgress = Number.isFinite(message?.progress)
@@ -337,8 +366,8 @@ function normalizeProgressMessage(
     status: rawStatus,
     progress,
     message: isRecognizing && activeOcrUnit >= 0
-      ? translateTesseractStatus(rawStatus, localProgress)
-      : translateTesseractStatus(rawStatus, progress)
+      ? translateTesseractStatus(rawStatus, localProgress, messages)
+      : translateTesseractStatus(rawStatus, progress, messages)
   };
 }
 
@@ -351,16 +380,16 @@ function ocrUnitProgress(unitIndex: number, totalUnits: number, localProgress: n
     * (OCR_PROGRESS_RECOGNIZE_DONE - OCR_PROGRESS_WORKER_READY);
 }
 
-function translateTesseractStatus(status: string, progress: number) {
+function translateTesseractStatus(status: string, progress: number, messages: FloorplanOcrMessages) {
   const percent = Math.round(progress * 100);
   const label =
     {
-      "loading tesseract core": "OCR 코어를 불러오는 중입니다.",
-      "initializing tesseract": "OCR 엔진을 초기화하는 중입니다.",
-      "loading language traineddata": "한글/영문 학습 데이터를 불러오는 중입니다.",
-      "initializing api": "OCR API를 초기화하는 중입니다.",
-      "recognizing text": "텍스트를 인식하는 중입니다."
-    }[status] ?? "OCR 작업을 처리하는 중입니다.";
+      "loading tesseract core": messages.statusLoadingCore,
+      "initializing tesseract": messages.statusInitializingEngine,
+      "loading language traineddata": messages.statusLoadingLanguage,
+      "initializing api": messages.statusInitializingApi,
+      "recognizing text": messages.statusRecognizingText
+    }[status] ?? messages.statusWorking;
   return `${label} (${percent}%)`;
 }
 
@@ -674,6 +703,7 @@ async function recognizeRegion(
   imageData: ImageData,
   region: FloorplanTextRegion,
   regionIndex: number,
+  messages: FloorplanOcrMessages,
   onRotationStart?: (rotationIndex: number) => void
 ): Promise<FloorplanOcrResult> {
   const rotations = getOcrRotations(region);
@@ -682,7 +712,7 @@ async function recognizeRegion(
   for (let rotationIndex = 0; rotationIndex < rotations.length; rotationIndex += 1) {
     onRotationStart?.(rotationIndex);
     const rotation = rotations[rotationIndex];
-    const crop = await cropTextRegion(imageData, region, OCR_CROP_SCALE, rotation);
+    const crop = await cropTextRegion(imageData, region, OCR_CROP_SCALE, messages, rotation);
     const result = await worker.recognize(crop.blob, undefined, {
       text: true,
       blocks: true
@@ -759,14 +789,14 @@ function normalizeOcrNumericText(text: string): string {
   return text.replace(/,/g, "");
 }
 
-async function readImageData(image: Blob): Promise<ImageData> {
+async function readImageData(image: Blob, messages: FloorplanOcrMessages): Promise<ImageData> {
   const bitmap = await createImageBitmap(image);
   try {
     const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
     const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("OCR용 이미지 데이터를 준비하지 못했습니다.");
+    if (!context) throw new Error(messages.imageDataFailed);
     context.drawImage(bitmap, 0, 0);
     return context.getImageData(0, 0, canvas.width, canvas.height);
   } finally {
@@ -778,31 +808,32 @@ async function cropTextRegion(
   imageData: ImageData,
   region: FloorplanTextRegion,
   scale: number,
+  messages: FloorplanOcrMessages,
   rotation = 0
 ): Promise<{ blob: Blob; removedGuideLines: number }> {
   const cropCanvas = document.createElement("canvas");
   cropCanvas.width = region.width;
   cropCanvas.height = region.height;
   const cropContext = cropCanvas.getContext("2d", { willReadFrequently: true });
-  if (!cropContext) throw new Error("OCR crop 이미지를 만들 수 없습니다.");
+  if (!cropContext) throw new Error(messages.cropCanvasFailed);
   cropContext.fillStyle = "#ffffff";
   cropContext.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
   cropContext.putImageData(imageData, -region.x, -region.y);
   const removedGuideLines = shouldCleanDimensionCrop(region) ? eraseLongGuideLinesFromCrop(cropContext, cropCanvas.width, cropCanvas.height) : 0;
 
-  const sourceCanvas = rotation === 0 ? cropCanvas : rotateCanvas(cropCanvas, rotation);
+  const sourceCanvas = rotation === 0 ? cropCanvas : rotateCanvas(cropCanvas, rotation, messages);
   const scaledCanvas = document.createElement("canvas");
   scaledCanvas.width = Math.max(1, sourceCanvas.width * scale);
   scaledCanvas.height = Math.max(1, sourceCanvas.height * scale);
   const scaledContext = scaledCanvas.getContext("2d", { alpha: false });
-  if (!scaledContext) throw new Error("OCR crop 확대 이미지를 만들 수 없습니다.");
+  if (!scaledContext) throw new Error(messages.cropScaleFailed);
   scaledContext.fillStyle = "#ffffff";
   scaledContext.fillRect(0, 0, scaledCanvas.width, scaledCanvas.height);
   scaledContext.imageSmoothingEnabled = false;
   scaledContext.drawImage(sourceCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
 
   const blob = await new Promise<Blob | null>((resolve) => scaledCanvas.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("OCR crop PNG 생성에 실패했습니다.");
+  if (!blob) throw new Error(messages.cropPngFailed);
   return { blob, removedGuideLines };
 }
 
@@ -896,13 +927,13 @@ function paintWhiteRun(
   }
 }
 
-function rotateCanvas(canvas: HTMLCanvasElement, rotation: number): HTMLCanvasElement {
+function rotateCanvas(canvas: HTMLCanvasElement, rotation: number, messages: FloorplanOcrMessages): HTMLCanvasElement {
   const rotated = document.createElement("canvas");
   const quarterTurn = Math.abs(rotation) === 90;
   rotated.width = quarterTurn ? canvas.height : canvas.width;
   rotated.height = quarterTurn ? canvas.width : canvas.height;
   const context = rotated.getContext("2d", { alpha: false });
-  if (!context) throw new Error("OCR crop 회전 이미지를 만들 수 없습니다.");
+  if (!context) throw new Error(messages.cropRotateFailed);
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, rotated.width, rotated.height);
   context.translate(rotated.width / 2, rotated.height / 2);

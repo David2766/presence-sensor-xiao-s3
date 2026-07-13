@@ -1,5 +1,6 @@
 #include "setup_handler.h"
 
+#include "http_response.h"
 #include "radar_api_server.h"
 #include "setup_page.h"
 #include "setup_security.h"
@@ -71,6 +72,19 @@ std::string json_escape(const char *value) {
 
 std::string json_escape(const std::string &value) { return json_escape(value.c_str()); }
 
+const char *setup_status_code(bool connected, SetupWifiStage stage) {
+  if (connected || stage == SetupWifiStage::CONNECTED)
+    return "setup_wifi_connected";
+  if (stage == SetupWifiStage::CONNECTING)
+    return "setup_wifi_connecting";
+  if (stage == SetupWifiStage::FAILED)
+    return "setup_wifi_failed";
+  return "setup_ready";
+}
+
+const char *setup_status_severity(SetupWifiStage stage) {
+  return stage == SetupWifiStage::FAILED ? "warning" : "info";
+}
 
 }  // namespace
 
@@ -257,10 +271,12 @@ void SetupHandler::handle_status_(AsyncWebServerRequest *request) const {
   stream->printf(
       "{\"ok\":true,\"device\":{\"name\":\"%s\",\"mac\":\"%s\"},"
       "\"wifi\":{\"connected\":%s,\"apActive\":%s,\"ip\":\"%s\"},\"setup\":{\"stage\":\"%s\",\"ssid\":\"%s\"},"
-      "\"apiKeyState\":\"%s\"}",
+      "\"apiKeyState\":\"%s\",\"statusInfo\":{\"code\":\"%s\",\"severity\":\"%s\",\"detail\":{\"stage\":\"%s\"}}}",
       name.c_str(), mac_s, (connected || setup_wifi_stage == SetupWifiStage::CONNECTED) ? "true" : "false",
       ap_active ? "true" : "false", ip.c_str(),
-      setup_wifi_stage_to_string(setup_wifi_stage), json_escape(setup_wifi_ssid).c_str(), key_state);
+      setup_wifi_stage_to_string(setup_wifi_stage), json_escape(setup_wifi_ssid).c_str(), key_state,
+      setup_status_code(connected, setup_wifi_stage), setup_status_severity(setup_wifi_stage),
+      setup_wifi_stage_to_string(setup_wifi_stage));
   request->send(stream);
 }
 
@@ -292,24 +308,27 @@ void SetupHandler::handle_networks_(AsyncWebServerRequest *request) const {
 void SetupHandler::handle_scan_(AsyncWebServerRequest *request) const {
   this->begin_setup_session_();
   if (setup_wifi_stage == SetupWifiStage::CONNECTING) {
-    request->send(409, "application/json", "{\"ok\":false,\"error\":\"wifi_connecting\"}");
+    http_response::send_error_info(request, 409, "wifi_connecting", "setup_wifi_connecting", "warning",
+                                   "{\"stage\":\"connecting\"}");
     return;
   }
 
   ESP_LOGI(TAG, "setup: esp-idf scan requested by setup UI stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
   const bool ok = start_setup_network_scan_from_idf_("manual", false);
   if (!ok) {
-    request->send(500, "application/json", "{\"ok\":false,\"error\":\"scan_failed\"}");
+    http_response::send_error_info(request, 500, "scan_failed", "setup_scan_failed", "error", "{}");
     return;
   }
   this->server_->finish_setup_scan_after(3000);
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"scan_started\"}");
+  request->send(200, "application/json",
+                "{\"ok\":true,\"message\":\"scan_started\","
+                "\"statusInfo\":{\"code\":\"setup_scan_started\",\"severity\":\"info\",\"detail\":{}}}");
 }
 
 void SetupHandler::handle_prepare_security_(AsyncWebServerRequest *request) const {
 #ifdef USE_API_NOISE
   if (api::global_api_server == nullptr) {
-    request->send(503, "application/json", "{\"ok\":false,\"error\":\"api_key_unavailable\"}");
+    http_response::send_error_info(request, 503, "api_key_unavailable", "api_key_unavailable", "error", "{}");
     return;
   }
 
@@ -322,7 +341,8 @@ void SetupHandler::handle_prepare_security_(AsyncWebServerRequest *request) cons
   if (!needs_new_key) {
     ESP_LOGI(TAG, "setup: prepare_security keeping existing api key");
     auto *stream = request->beginResponseStream("application/json");
-    stream->printf("{\"ok\":true,\"apiKeyChanged\":false,\"apiKeyState\":\"custom\",\"dashboardUrl\":\"%s\"}",
+    stream->printf("{\"ok\":true,\"apiKeyChanged\":false,\"apiKeyState\":\"custom\",\"dashboardUrl\":\"%s\","
+                   "\"statusInfo\":{\"code\":\"api_key_ready\",\"severity\":\"info\",\"detail\":{}}}",
                    dashboard_url.c_str());
     request->send(stream);
     return;
@@ -331,7 +351,7 @@ void SetupHandler::handle_prepare_security_(AsyncWebServerRequest *request) cons
   api::psk_t new_psk{};
   if (!generate_api_key(&new_psk)) {
     ESP_LOGE(TAG, "setup: prepare_security random_failed");
-    request->send(500, "application/json", "{\"ok\":false,\"error\":\"random_failed\"}");
+    http_response::send_error_info(request, 500, "random_failed", "api_key_random_failed", "error", "{}");
     return;
   }
   if (psk_equals(new_psk, DEMO_API_PSK)) {
@@ -339,7 +359,7 @@ void SetupHandler::handle_prepare_security_(AsyncWebServerRequest *request) cons
   }
   if (!api::global_api_server->save_noise_psk(new_psk, true)) {
     ESP_LOGE(TAG, "setup: prepare_security api_key_save_failed");
-    request->send(500, "application/json", "{\"ok\":false,\"error\":\"api_key_save_failed\"}");
+    http_response::send_error_info(request, 500, "api_key_save_failed", "api_key_save_failed", "error", "{}");
     return;
   }
 
@@ -347,41 +367,44 @@ void SetupHandler::handle_prepare_security_(AsyncWebServerRequest *request) cons
   const auto api_key = json_escape(encode_base64_psk(new_psk));
   auto *stream = request->beginResponseStream("application/json");
   stream->printf(
-      "{\"ok\":true,\"apiKeyChanged\":true,\"apiKeyState\":\"custom\",\"apiKey\":\"%s\",\"dashboardUrl\":\"%s\"}",
+      "{\"ok\":true,\"apiKeyChanged\":true,\"apiKeyState\":\"custom\",\"apiKey\":\"%s\",\"dashboardUrl\":\"%s\","
+      "\"statusInfo\":{\"code\":\"api_key_rotated\",\"severity\":\"info\",\"detail\":{}}}",
       api_key.c_str(), dashboard_url.c_str());
   request->send(stream);
   ESP_LOGI(TAG, "setup: prepare_security scheduling auto reboot guard");
   this->server_->schedule_setup_auto_reboot();
 #else
-  request->send(503, "application/json", "{\"ok\":false,\"error\":\"api_key_unsupported\"}");
+  http_response::send_error_info(request, 503, "api_key_unsupported", "api_key_unsupported", "error", "{}");
 #endif
 }
 
 void SetupHandler::handle_apply_wifi_(AsyncWebServerRequest *request) const {
   if (wifi::global_wifi_component == nullptr) {
-    request->send(503, "application/json", "{\"ok\":false,\"error\":\"wifi_unavailable\"}");
+    http_response::send_error_info(request, 503, "wifi_unavailable", "wifi_unavailable", "error", "{}");
     return;
   }
 
   const auto ssid = request->arg("ssid");
   const auto psk = request->arg("psk");
   if (ssid.empty()) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"missing_ssid\"}");
+    http_response::send_error_info(request, 400, "missing_ssid", "invalid_request", "error", "{}");
     return;
   }
   if (cached_network_is_open_(ssid)) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"open_wifi_unsupported\"}");
+    http_response::send_error_info(request, 400, "open_wifi_unsupported", "open_wifi_unsupported", "error", "{}");
     return;
   }
   if (psk.size() < 8 || psk.size() > 63) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_password_length\"}");
+    http_response::send_error_info(request, 400, "invalid_password_length", "invalid_password_length", "error", "{}");
     return;
   }
 
   ESP_LOGI(TAG, "Applying setup WiFi: SSID='%s'", ssid.c_str());
   ESP_LOGI(TAG, "setup: apply_wifi begin ssid='%s' stage=%s", ssid.c_str(),
            setup_wifi_stage_to_string(setup_wifi_stage));
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"wifi_checking\",\"stage\":\"checking_wifi\"}");
+  request->send(200, "application/json",
+                "{\"ok\":true,\"message\":\"wifi_checking\",\"stage\":\"checking_wifi\","
+                "\"statusInfo\":{\"code\":\"setup_wifi_connecting\",\"severity\":\"info\",\"detail\":{\"stage\":\"checking_wifi\"}}}");
   setup_wifi_stage = SetupWifiStage::CONNECTING;
   setup_wifi_ssid = ssid;
   setup_wifi_psk = psk;
@@ -397,7 +420,10 @@ void SetupHandler::handle_apply_wifi_(AsyncWebServerRequest *request) const {
 
 void SetupHandler::handle_connected_(AsyncWebServerRequest *request) const {
   ESP_LOGI(TAG, "setup: connected endpoint called stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"setup_ap_close_scheduled\"}");
+  request->send(200, "application/json",
+                "{\"ok\":true,\"message\":\"setup_ap_close_scheduled\","
+                "\"statusInfo\":{\"code\":\"setup_ap_close_scheduled\",\"severity\":\"info\","
+                "\"detail\":{\"delayMs\":300000}}}");
   setup_wifi_stage = SetupWifiStage::CONNECTED;
   if (setup_wifi_connected_ip.empty())
     setup_wifi_connected_ip = wifi_sta_ip_address();
@@ -414,7 +440,9 @@ void SetupHandler::handle_connected_(AsyncWebServerRequest *request) const {
 
 void SetupHandler::handle_finish_(AsyncWebServerRequest *request) const {
   ESP_LOGI(TAG, "setup: finish endpoint called stage=%s", setup_wifi_stage_to_string(setup_wifi_stage));
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"setup_ap_closing\"}");
+  request->send(200, "application/json",
+                "{\"ok\":true,\"message\":\"setup_ap_closing\","
+                "\"statusInfo\":{\"code\":\"setup_ap_closing\",\"severity\":\"info\",\"detail\":{}}}");
 #ifdef USE_ESP32
   persist_setup_wifi_credentials_();
 #endif

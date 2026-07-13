@@ -2,17 +2,25 @@ import {
   FLOORPLAN_CONFIG_PATH,
   FLOORPLAN_IMAGE_PATH,
   floorplanStorageJson,
-  type FloorplanStorageDocument
+  type FloorplanStorageDocument,
+  type FloorplanStorageOcclusion,
+  type FloorplanStorageObject,
+  type FloorplanStorageRadar
 } from "../../core/floorplan/floorplan-storage";
+import { parseApiErrorResponse, type ApiInfo } from "../api/api-result";
+import { uploadChunkedFormPayload } from "../api/chunked-form-upload";
 
 export const FLOORPLAN_CONFIG_API_PATH = "/api/floorplan";
 export const FLOORPLAN_IMAGE_API_PATH = "/api/floorplan/image";
 export const FLOORPLAN_STATUS_API_PATH = "/api/floorplan/status";
 const FLOORPLAN_DELETE_API_PATH = "/api/floorplan/delete";
+export const FLOORPLAN_RADAR_PATCH_API_PATH = "/api/floorplan/radar";
+export const FLOORPLAN_ROOM_NAME_PATCH_API_PATH = "/api/floorplan/room-name";
+export const FLOORPLAN_OCCLUSION_PATCH_API_PATH = "/api/floorplan/occlusion";
+export const FLOORPLAN_OBJECTS_PATCH_API_PATH = "/api/floorplan/objects";
 const FLOORPLAN_UPLOAD_START_API_PATH = "/api/floorplan/upload/start";
 const FLOORPLAN_UPLOAD_CHUNK_API_PATH = "/api/floorplan/upload/chunk";
 const FLOORPLAN_UPLOAD_COMMIT_API_PATH = "/api/floorplan/upload/commit";
-const UPLOAD_CHUNK_BYTES = 192;
 
 export interface FloorplanStorageClientOptions {
   baseUrl?: string;
@@ -39,6 +47,22 @@ export interface FloorplanStorageStatus {
   uploadWritten: number;
 }
 
+export type FloorplanStorageErrorInfo = ApiInfo;
+
+export class FloorplanStorageRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly statusText: string,
+    public readonly errorCode?: string,
+    public readonly errorInfo?: FloorplanStorageErrorInfo,
+    public readonly legacyError?: string
+  ) {
+    super(message);
+    this.name = "FloorplanStorageRequestError";
+  }
+}
+
 export async function saveFloorplanStorage(
   { document, image }: SaveFloorplanStorageInput,
   options: FloorplanStorageClientOptions = {}
@@ -52,6 +76,35 @@ export async function saveFloorplanStorageDocument(
   options: FloorplanStorageClientOptions = {}
 ): Promise<void> {
   await uploadPayload("config", textToBytes(floorplanStorageJson(document)), options);
+}
+
+export async function saveFloorplanRadarPatch(
+  radar: FloorplanStorageRadar,
+  options: FloorplanStorageClientOptions = {}
+): Promise<void> {
+  await postForm(FLOORPLAN_RADAR_PATCH_API_PATH, options, { data: JSON.stringify(radar) });
+}
+
+export async function saveFloorplanRoomNamePatch(
+  roomId: string,
+  name: string,
+  options: FloorplanStorageClientOptions = {}
+): Promise<void> {
+  await postForm(FLOORPLAN_ROOM_NAME_PATCH_API_PATH, options, { id: roomId, name });
+}
+
+export async function saveFloorplanOcclusionPatch(
+  occlusion: FloorplanStorageOcclusion,
+  options: FloorplanStorageClientOptions = {}
+): Promise<void> {
+  await postForm(FLOORPLAN_OCCLUSION_PATCH_API_PATH, options, { data: JSON.stringify(occlusion) });
+}
+
+export async function saveFloorplanObjectsPatch(
+  objects: FloorplanStorageObject[],
+  options: FloorplanStorageClientOptions = {}
+): Promise<void> {
+  await postForm(FLOORPLAN_OBJECTS_PATCH_API_PATH, options, { data: JSON.stringify(objects) });
 }
 
 export async function loadFloorplanStorageDocument(
@@ -105,24 +158,16 @@ async function uploadPayload(
   bytes: Uint8Array,
   options: FloorplanStorageClientOptions
 ): Promise<void> {
-  const session = createUploadSessionId();
-  await postForm(FLOORPLAN_UPLOAD_START_API_PATH, options, {
-    session,
-    target,
-    size: String(bytes.byteLength)
+  await uploadChunkedFormPayload({
+    paths: {
+      start: FLOORPLAN_UPLOAD_START_API_PATH,
+      chunk: FLOORPLAN_UPLOAD_CHUNK_API_PATH,
+      commit: FLOORPLAN_UPLOAD_COMMIT_API_PATH
+    },
+    bytes,
+    fields: { target },
+    postForm: (path, values) => postForm(path, options, values)
   });
-
-  for (let offset = 0; offset < bytes.byteLength; offset += UPLOAD_CHUNK_BYTES) {
-    const chunk = bytes.subarray(offset, Math.min(offset + UPLOAD_CHUNK_BYTES, bytes.byteLength));
-    await postForm(FLOORPLAN_UPLOAD_CHUNK_API_PATH, options, {
-      session,
-      target,
-      offset: String(offset),
-      data: bytesToHex(chunk)
-    });
-  }
-
-  await postForm(FLOORPLAN_UPLOAD_COMMIT_API_PATH, options, { session, target });
 }
 
 async function blobToBytes(blob: Blob): Promise<Uint8Array> {
@@ -133,30 +178,25 @@ function textToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-function bytesToHex(bytes: Uint8Array): string {
-  let hex = "";
-  for (const byte of bytes) {
-    hex += byte.toString(16).padStart(2, "0");
-  }
-  return hex;
-}
-
-function createUploadSessionId(): string {
-  const values = new Uint32Array(1);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(values);
-  }
-  const fallback = (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
-  return String(values[0] || fallback || 1);
-}
-
 async function request(path: string, options: FloorplanStorageClientOptions, init?: RequestInit): Promise<Response> {
   const fetcher = options.fetcher ?? fetch;
   const response = await fetcher(resolveApiUrl(options.baseUrl ?? "", path), init);
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    throw await requestError(response);
   }
   return response;
+}
+
+async function requestError(response: Response): Promise<FloorplanStorageRequestError> {
+  const parsed = await parseApiErrorResponse(response);
+  return new FloorplanStorageRequestError(
+    parsed.message,
+    parsed.status,
+    parsed.statusText,
+    parsed.code,
+    parsed.errorInfo,
+    parsed.legacyError ?? parsed.rawText
+  );
 }
 
 function resolveApiUrl(baseUrl: string, path: string): string {

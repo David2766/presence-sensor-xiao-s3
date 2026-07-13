@@ -17,6 +17,8 @@
   --rz-zone-reduced-strong-stroke: rgba(123, 184, 216, 0.95);
   --rz-zone-disabled-fill: rgba(160, 174, 184, 0.06);
   --rz-zone-disabled-stroke: rgba(160, 174, 184, 0.62);
+  --rz-zone-exit-fill: rgba(74, 222, 128, 0.1);
+  --rz-zone-exit-stroke: rgba(74, 222, 128, 0.86);
   --rz-zone-placeholder-fill: rgba(123, 184, 216, 0.05);
   --rz-zone-placeholder-stroke: rgba(215, 238, 252, 0.48);
   --rz-zone-label: rgba(215, 238, 252, 0.88);
@@ -259,10 +261,19 @@ button:disabled {
 
 .app-tabs {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 10px 18px;
   border-bottom: 1px solid rgba(123, 184, 216, 0.14);
   background: #141f29;
+}
+
+.app-tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .app-tabs button {
@@ -279,6 +290,57 @@ button:disabled {
   border-color: rgba(123, 184, 216, 0.72);
   background: rgba(123, 184, 216, 0.2);
   color: #d7eefc;
+}
+
+.language-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.language-menu-button {
+  min-width: 92px;
+  border-color: rgba(123, 184, 216, 0.24);
+  background: rgba(17, 24, 32, 0.36);
+  color: rgba(215, 238, 252, 0.82);
+}
+
+.language-menu-button::after {
+  content: "";
+  display: inline-block;
+  margin-left: 8px;
+  border-top: 5px solid rgba(215, 238, 252, 0.68);
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  vertical-align: middle;
+}
+
+.language-menu-list {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  min-width: 142px;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid rgba(123, 184, 216, 0.22);
+  border-radius: 8px;
+  background: rgba(20, 31, 41, 0.98);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+}
+
+.language-menu-list button {
+  justify-content: start;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.language-menu-list button.active {
+  border-color: rgba(6, 214, 160, 0.42);
+  background: rgba(6, 214, 160, 0.15);
+  color: #9ff3d9;
 }
 
 .tab-page {
@@ -370,6 +432,23 @@ button:disabled {
   height: 100%;
   transform-origin: 0 0;
   will-change: transform;
+}
+
+.floorplan-image-frame {
+  position: relative;
+  display: inline-grid;
+  max-width: 100%;
+  max-height: min(72vh, 760px);
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.floorplan-image-frame .floorplan-base-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .floorplan-image-layer img {
@@ -613,6 +692,46 @@ button:disabled {
   stroke: var(--rz-zone-disabled-stroke);
 }
 
+.floorplan-radar-zone.exit {
+  fill: var(--rz-zone-exit-fill);
+  stroke: var(--rz-zone-exit-stroke);
+}
+
+.floorplan-radar-exit-line-display,
+.floorplan-radar-exit-line-edit {
+  stroke: var(--rz-zone-exit-stroke);
+  stroke-linecap: round;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.floorplan-radar-exit-line-display {
+  stroke-width: 8;
+  filter: drop-shadow(0 0 8px rgba(74, 222, 128, 0.25));
+}
+
+.floorplan-radar-exit-line-display.selected,
+.floorplan-radar-exit-line-edit {
+  stroke-width: 10;
+}
+
+.floorplan-radar-exit-line-hit {
+  cursor: move;
+  stroke: transparent;
+  stroke-linecap: round;
+  stroke-width: 24;
+  vector-effect: non-scaling-stroke;
+}
+
+.floorplan-radar-exit-line-hit[data-editable="true"] {
+  pointer-events: stroke;
+}
+
+.floorplan-radar-exit-line-handle {
+  fill: #dcfce7;
+  stroke: var(--rz-zone-exit-stroke);
+}
+
 .zone-handle,
 .floorplan-radar-zone-point,
 .floorplan-candidate-vertex.manual circle {
@@ -838,36 +957,6 @@ button:disabled {
   vector-effect: non-scaling-stroke;
 }
 
-.floorplan-outer-bounds {
-  pointer-events: none;
-}
-
-.floorplan-outer-bounds rect {
-  fill: rgba(72, 199, 255, 0.035);
-  stroke: rgba(72, 199, 255, 0.95);
-  stroke-width: 2.5;
-  stroke-dasharray: 12 7;
-  vector-effect: non-scaling-stroke;
-}
-
-.floorplan-outer-bounds circle {
-  fill: rgba(17, 24, 32, 0.92);
-  stroke: rgba(72, 199, 255, 0.95);
-  stroke-width: 2;
-  vector-effect: non-scaling-stroke;
-}
-
-.floorplan-outer-bounds text {
-  fill: #48c7ff;
-  font-size: var(--rz-font-map-debug);
-  font-weight: var(--rz-weight-title);
-  paint-order: stroke;
-  pointer-events: none;
-  stroke: rgba(17, 24, 32, 0.92);
-  stroke-width: 4px;
-  vector-effect: non-scaling-stroke;
-}
-
 .floorplan-room-size-bounds {
   pointer-events: none;
 }
@@ -946,6 +1035,16 @@ button:disabled {
 .floorplan-candidate-group.confirmed .floorplan-candidate-shape {
   fill: rgba(6, 214, 160, 0.11);
   stroke: rgba(6, 214, 160, 0.82);
+}
+
+.floorplan-candidate-layer.focus-selected-candidate .floorplan-candidate-group:not(.selected) .floorplan-candidate-shape {
+  opacity: 0.34;
+}
+
+.floorplan-candidate-layer.focus-selected-candidate .floorplan-candidate-group.selected .floorplan-candidate-shape {
+  fill: rgba(6, 214, 160, 0.2);
+  stroke: rgba(6, 214, 160, 0.98);
+  stroke-width: 3;
 }
 
 .floorplan-candidate-edit-edge {
@@ -1420,6 +1519,7 @@ button:disabled {
 .floorplan-analysis-card,
 .floorplan-split-card,
 .floorplan-manual-card,
+.floorplan-tool-card,
 .floorplan-furniture-card,
 .floorplan-edit-tool-card,
 .floorplan-candidate-card,
@@ -1440,6 +1540,7 @@ button:disabled {
 .floorplan-analysis-card strong,
 .floorplan-split-card strong,
 .floorplan-manual-card strong,
+.floorplan-tool-card strong,
 .floorplan-furniture-card strong,
 .floorplan-edit-tool-card strong,
 .floorplan-candidate-card strong,
@@ -2965,6 +3066,10 @@ button:disabled {
   opacity: 0.68;
 }
 
+.zone-list-item.exit {
+  border-color: rgba(74, 222, 128, 0.34);
+}
+
 .zone-list-item.placeholder {
   border-style: dashed;
   opacity: 0.78;
@@ -3045,7 +3150,7 @@ button:disabled {
 
 .zone-type-buttons {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   gap: 6px;
 }
 
@@ -3074,6 +3179,11 @@ button:disabled {
 .zone-type-button.disabled.selected {
   border-color: var(--rz-zone-disabled-stroke);
   background: rgba(160, 174, 184, 0.16);
+}
+
+.zone-type-button.exit.selected {
+  border-color: var(--rz-zone-exit-stroke);
+  background: rgba(74, 222, 128, 0.16);
 }
 
 .danger-button {
@@ -3628,18 +3738,23 @@ button:disabled {
 
 .dashboard-floorplan-preview {
   position: relative;
-  width: min(100%, 920px);
-  max-height: min(62vh, 620px);
+  width: 100%;
   display: grid;
   place-items: center;
   overflow: hidden;
 }
 
-.dashboard-floorplan-preview svg,
-.dashboard-floorplan-preview img {
-  display: block;
+.dashboard-floorplan-preview .floorplan-image-frame {
+  max-height: min(62vh, 620px);
+}
+
+.dashboard-floorplan-room-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   width: 100%;
   height: 100%;
+  pointer-events: none;
 }
 
 .dashboard-floorplan-room {
@@ -3715,6 +3830,27 @@ button:disabled {
   min-width: 96px;
   min-height: 36px;
   padding-inline: 14px;
+}
+
+.diagnostic-log-download-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  min-height: 36px;
+  padding-inline: 14px;
+  border: 1px solid rgba(126, 211, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(126, 211, 255, 0.12);
+  color: #d7efff;
+  font-size: var(--rz-font-control);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.diagnostic-log-download-button:hover {
+  border-color: rgba(126, 211, 255, 0.48);
+  background: rgba(126, 211, 255, 0.18);
 }
 
 .diagnostic-dialog {
@@ -4520,6 +4656,37 @@ button:disabled {
   stroke: var(--rz-zone-disabled-stroke);
 }
 
+.web-zone.exit polygon {
+  fill: var(--rz-zone-exit-fill);
+  stroke: var(--rz-zone-exit-stroke);
+}
+
+.web-zone.exit .exit-line-display {
+  stroke: var(--rz-zone-exit-stroke);
+  stroke-width: 8;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 8px rgba(74, 222, 128, 0.25));
+  pointer-events: none;
+}
+
+.web-zone.exit.selected .exit-line-display {
+  stroke-width: 10;
+}
+
+.web-zone.exit .exit-line-hit {
+  stroke: transparent;
+  stroke-width: 24;
+  stroke-linecap: round;
+  cursor: move;
+  pointer-events: all;
+}
+
+.web-zone.exit .exit-line-handle {
+  fill: #dcfce7;
+  stroke: var(--rz-zone-exit-stroke);
+  stroke-width: 3;
+}
+
 .web-zone.placeholder polygon {
   fill: var(--rz-zone-placeholder-fill);
   stroke: var(--rz-zone-placeholder-stroke);
@@ -4726,6 +4893,29 @@ button:disabled {
 
 .floorplan-stored-save-status {
   align-self: end;
+  max-height: 80px;
+  overflow: hidden;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    max-height 180ms ease,
+    padding 180ms ease,
+    border-width 180ms ease;
+}
+
+.floorplan-stored-save-status strong,
+.floorplan-stored-save-status span {
+  font-size: var(--rz-font-help);
+  line-height: 1.35;
+}
+
+.floorplan-stored-save-status[data-visible="false"] {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .floorplan-stored-tool-placeholder {
@@ -4748,12 +4938,15 @@ button:disabled {
   line-height: 1.5;
 }
 
+.floorplan-tool-card,
 .floorplan-furniture-card {
   gap: 10px;
   border-color: rgba(255, 209, 102, 0.22);
   background: rgba(255, 209, 102, 0.07);
 }
 
+.floorplan-tool-card > span,
+.floorplan-tool-card em,
 .floorplan-furniture-card > span,
 .floorplan-furniture-card em {
   color: rgba(215, 238, 252, 0.66);
@@ -4768,7 +4961,30 @@ button:disabled {
   gap: 8px;
 }
 
+.floorplan-furniture-target {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid rgba(6, 214, 160, 0.32);
+  border-radius: 7px;
+  background: rgba(6, 214, 160, 0.1);
+}
+
+.floorplan-furniture-target span {
+  color: rgba(215, 238, 252, 0.62);
+  font-size: var(--rz-font-label);
+}
+
+.floorplan-furniture-target strong {
+  overflow: hidden;
+  color: rgba(238, 255, 251, 0.95);
+  font-size: var(--rz-font-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .floorplan-furniture-palette button,
+.floorplan-tool-list-item,
 .floorplan-furniture-list-item {
   display: grid;
   min-height: 54px;
@@ -4785,6 +5001,7 @@ button:disabled {
 }
 
 .floorplan-furniture-palette button:hover,
+.floorplan-tool-list-item:hover,
 .floorplan-furniture-list-item:hover {
   border-color: rgba(255, 209, 102, 0.5);
   background: rgba(255, 209, 102, 0.12);
@@ -4797,11 +5014,13 @@ button:disabled {
   filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.38));
 }
 
+.floorplan-tool-list,
 .floorplan-furniture-list {
   display: grid;
   gap: 6px;
 }
 
+.floorplan-tool-list-item,
 .floorplan-furniture-list-item {
   grid-template-columns: 1fr auto;
   justify-items: stretch;
@@ -4809,11 +5028,13 @@ button:disabled {
   text-align: left;
 }
 
+.floorplan-tool-list-item[data-active="true"],
 .floorplan-furniture-list-item[data-active="true"] {
   border-color: rgba(6, 214, 160, 0.52);
   background: rgba(6, 214, 160, 0.16);
 }
 
+.floorplan-tool-list-item small,
 .floorplan-furniture-list-item small {
   color: rgba(215, 238, 252, 0.58);
   font-size: var(--rz-font-label);
@@ -4839,30 +5060,6 @@ button:disabled {
 
 .floorplan-stored-empty {
   place-content: center;
-}
-
-.floorplan-stored-image-frame {
-  position: relative;
-  display: inline-grid;
-  max-width: 100%;
-  max-height: min(72vh, 760px);
-  overflow: hidden;
-  border-radius: 8px;
-}
-
-.floorplan-stored-image-frame img {
-  display: block;
-  max-width: 100%;
-  max-height: min(72vh, 760px);
-  object-fit: contain;
-}
-
-.floorplan-stored-image-frame svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
 }
 
 .floorplan-stored-room-shape {

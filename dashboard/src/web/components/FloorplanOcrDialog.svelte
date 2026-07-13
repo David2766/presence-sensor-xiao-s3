@@ -1,5 +1,6 @@
 <script>
   let {
+    messages,
     open = false,
     busy = false,
     progress = 0,
@@ -11,6 +12,8 @@
     onClose
   } = $props();
 
+  const text = $derived(messages.floorplan.ocrDialog);
+
   function percent() {
     return Math.round(Math.max(0, Math.min(1, progress)) * 100);
   }
@@ -21,12 +24,12 @@
     <div class="floorplan-ocr-modal" role="dialog" aria-modal="true" aria-labelledby="floorplan-ocr-title">
       <header>
         <div>
-          <strong id="floorplan-ocr-title">{busy ? "OCR 분석 중" : errorText ? "OCR 분석 확인" : "OCR 분석 완료"}</strong>
+          <strong id="floorplan-ocr-title">{busy ? text.busyTitle : errorText ? text.errorTitle : text.doneTitle}</strong>
           <span>{statusText}</span>
         </div>
       </header>
 
-      <div class="floorplan-ocr-progress" aria-label="OCR 진행률">
+      <div class="floorplan-ocr-progress" aria-label={text.progressAria}>
         <span style={`width: ${percent()}%`}></span>
       </div>
       <div class="floorplan-ocr-progress-label">{percent()}%</div>
@@ -50,13 +53,13 @@
       <footer>
         {#if busy}
           <button type="button" class="floorplan-step-button floorplan-fixed-text" onclick={onCancel}>
-            <span>작업 취소</span>
-            <strong>OCR 중단</strong>
+            <span>{text.cancelLabel}</span>
+            <strong>{text.cancelAction}</strong>
           </button>
         {:else}
           <button type="button" class="floorplan-next-button floorplan-fixed-text" onclick={onClose}>
-            <span>닫기</span>
-            <strong>결과 확인</strong>
+            <span>{text.closeLabel}</span>
+            <strong>{text.closeAction}</strong>
           </button>
         {/if}
       </footer>

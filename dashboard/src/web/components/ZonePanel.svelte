@@ -1,9 +1,10 @@
 <script lang="ts">
   import { MAX_SOFTWARE_ZONES, MAX_ZONE_NAME_LENGTH } from "../../core/constants";
-  import { zoneDisplayName, zoneSlotLabel } from "../../core/zones";
+  import type { Messages } from "../i18n/types";
   import type { WebZone, WebZoneType } from "../types";
 
   type Props = {
+    messages: Messages;
     loaded: boolean;
     zones: WebZone[];
     selectedZone: WebZone | null;
@@ -17,6 +18,7 @@
   };
 
   let {
+    messages,
     loaded,
     zones,
     selectedZone,
@@ -28,15 +30,41 @@
     onSetZoneType,
     onDeleteSelected
   }: Props = $props();
+
+  const text = $derived(messages.zones);
+
+  function zoneFallbackName(zoneId: string): string {
+    const match = /^zone_(\d+)$/.exec(zoneId);
+    return match ? text.zoneLabel(match[1]) : zoneId;
+  }
+
+  function defaultZoneNameIndex(name: string): string | null {
+    const match = /^(?:구역|Zone)\s*(\d+)$/.exec(name.trim());
+    return match?.[1] ?? null;
+  }
+
+  function displayZoneName(zone: WebZone): string {
+    const name = zone.name?.trim() ?? "";
+    const defaultIndex = name ? defaultZoneNameIndex(name) : null;
+    if (defaultIndex) return text.zoneLabel(defaultIndex);
+    return name || zoneFallbackName(zone.id);
+  }
+
+  function zoneNameInputValue(zone: WebZone): string {
+    const name = zone.name?.trim() ?? "";
+    const defaultIndex = name ? defaultZoneNameIndex(name) : null;
+    if (defaultIndex) return text.zoneLabel(defaultIndex);
+    return zone.name || "";
+  }
 </script>
 
 <section>
-  <h2>구역</h2>
+  <h2>{text.zonePanelTitle}</h2>
   <div class="zone-list" data-zone-list>
     {#if !loaded}
-      <p class="empty-zone-message">구역 데이터를 불러오는 중입니다.</p>
+      <p class="empty-zone-message">{text.zonesLoading}</p>
     {:else if zones.length === 0}
-      <p class="empty-zone-message">아직 설정된 구역이 없습니다. 구역을 추가해 감지 또는 제외 구역을 만들어보세요.</p>
+      <p class="empty-zone-message">{text.zonesEmpty}</p>
     {:else}
       {#each zones as zone (zone.id)}
         <button
@@ -45,8 +73,8 @@
           onclick={() => onSelectZone(zone.id)}
         >
           <div>
-            <strong>{zoneDisplayName(zone)}</strong>
-            <span>{zoneSlotLabel(zone.id)}</span>
+            <strong>{displayZoneName(zone)}</strong>
+            <span>{zoneFallbackName(zone.id)}</span>
           </div>
           <em>{zoneTypeLabels[zone.type]}</em>
         </button>
@@ -54,12 +82,12 @@
     {/if}
     <div class="zone-add-area">
       <button class="zone-add-button" type="button" disabled={zones.length >= MAX_SOFTWARE_ZONES} onclick={onAddZone}>
-        구역 추가
+        {text.addZone}
       </button>
       <p>
         {zones.length >= MAX_SOFTWARE_ZONES
-          ? "최대 6개까지 설정했습니다."
-          : "탐지/제외 구역은 최대 6개까지 만들 수 있습니다."}
+          ? text.maxZonesReached
+          : text.maxZonesHint}
       </p>
     </div>
   </div>
@@ -68,21 +96,21 @@
     {#if selectedZone}
       <div class={`zone-type-card ${selectedZone.type}`}>
         <div>
-          <strong>{zoneDisplayName(selectedZone)}</strong>
-          <span>원하는 구역을 지정하고 이름을 붙이거나 감지 제외를 하도록 설정할 수 있습니다.</span>
+          <strong>{displayZoneName(selectedZone)}</strong>
+          <span>{text.zoneDescription}</span>
         </div>
         <label class="zone-name-field">
-          <span>구역 이름</span>
+          <span>{text.zoneName}</span>
           <input
             type="text"
-            value={selectedZone.name || ""}
+            value={zoneNameInputValue(selectedZone)}
             maxlength={MAX_ZONE_NAME_LENGTH}
-            placeholder="예: 침대, 책상, 커튼"
+            placeholder={text.zoneNamePlaceholder}
             oninput={(event) => onSetZoneName(event.currentTarget.value)}
           />
         </label>
         <div class="zone-type-buttons">
-          {#each ["detection", "filter", "disabled"] as type}
+          {#each ["detection", "filter", "disabled", "exit"] as type}
             <button
               class={`zone-type-button ${type}${selectedZone.type === type ? " selected" : ""}`}
               type="button"
@@ -92,10 +120,10 @@
             </button>
           {/each}
         </div>
-        <button class="danger-button" type="button" onclick={onDeleteSelected}>구역 삭제</button>
+        <button class="danger-button" type="button" onclick={onDeleteSelected}>{text.deleteZone}</button>
       </div>
     {:else}
-      <p class="panel-help">구역을 추가하거나 선택하세요.</p>
+      <p class="panel-help">{text.selectOrAddZone}</p>
     {/if}
   </div>
 </section>

@@ -31,10 +31,17 @@ export interface WebApiKeyResult {
   visibleSeconds?: number;
 }
 
+export interface WebApiStatusInfo {
+  code: string;
+  severity?: "info" | "warning" | "error" | string;
+  detail?: Record<string, unknown>;
+}
+
 export interface WebHaSetupHandoffResult {
   ok: boolean;
   message?: string;
   waitSeconds?: number;
+  statusInfo?: WebApiStatusInfo;
 }
 
 export interface FirmwareUploadProgress {
@@ -67,6 +74,7 @@ export interface WebSystemStatus {
   api?: {
     connected?: boolean;
     warning?: boolean;
+    statusInfo?: WebApiStatusInfo;
   };
   boot?: {
     initialGuardActive?: boolean;

@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { CalibrationMetrics } from "../../core/calibration";
+  import type { Messages } from "../i18n/types";
   import type { CalibrationResult } from "../types";
 
   type Props = {
+    messages: Messages;
     open: boolean;
     running: boolean;
     result: CalibrationResult | null;
@@ -17,6 +19,7 @@
   };
 
   let {
+    messages,
     open,
     running,
     result,
@@ -29,16 +32,18 @@
     onClose,
     onStop
   }: Props = $props();
+
+  const text = $derived(messages.zones.calibrationDialog);
 </script>
 
 <div data-calibration-dialog>
   {#if open}
-    <div class="calibration-dialog-backdrop" role="dialog" aria-modal="true" aria-label="오탐 보정">
+    <div class="calibration-dialog-backdrop" role="dialog" aria-modal="true" aria-label={text.aria}>
       <div class="calibration-dialog">
         <div class="calibration-dialog-header">
           <div>
-            <strong>오탐 보정</strong>
-            <span>{running ? "보정 데이터를 수집하고 있습니다." : "보정 작업이 종료되었습니다."}</span>
+            <strong>{text.title}</strong>
+            <span>{running ? text.runningDescription : text.doneDescription}</span>
           </div>
           <button class="calibration-dialog-close" type="button" onclick={() => !running && onClose()}>
             ×
@@ -49,7 +54,7 @@
             <div class={`calibration-result ${result.tone}`}>
               <strong>{result.title}</strong>
               <p>{result.reason}</p>
-              <p>생성된 보정 구역: {result.createdCount}개</p>
+              <p>{text.createdZones(result.createdCount)}</p>
               {#if metrics && metrics.samples > 0}
                 <pre>{metricsLines.join("\n")}</pre>
               {/if}
@@ -65,7 +70,7 @@
             </div>
           </div>
           <div class="calibration-work">
-            <strong>작업 내역</strong>
+            <strong>{text.workItems}</strong>
             <ul>
               {#each workItems as item}
                 <li>{item}</li>
@@ -73,16 +78,16 @@
             </ul>
           </div>
           <div class="calibration-log">
-            <strong>{result?.tone === "error" ? "오류 로그" : "디버그 로그"}</strong>
-            <pre>{logs.length ? logs.join("\n") : "아직 기록된 로그가 없습니다."}</pre>
+            <strong>{result?.tone === "error" ? text.errorLog : text.debugLog}</strong>
+            <pre>{logs.length ? logs.join("\n") : text.noLogs}</pre>
           </div>
           <div class="calibration-dialog-actions">
             {#if running}
               <button class="calibration-button" type="button" onclick={onStop}>
-                보정 중지
+                {text.stop}
               </button>
             {:else}
-              <button type="button" onclick={onClose}>닫기</button>
+              <button type="button" onclick={onClose}>{text.close}</button>
             {/if}
           </div>
         </div>

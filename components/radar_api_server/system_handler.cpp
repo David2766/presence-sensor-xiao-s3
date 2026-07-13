@@ -94,12 +94,12 @@ void SystemHandler::handle_reboot_(AsyncWebServerRequest *request) {
 void SystemHandler::handle_api_key_(AsyncWebServerRequest *request) {
 #ifdef USE_API_NOISE
   if (api::global_api_server == nullptr) {
-    http_response::send_error(request, 503, "api_key_unavailable");
+    http_response::send_error_info(request, 503, "api_key_unavailable", "api_key_unavailable", "error", "{}");
     return;
   }
   const auto &ctx = api::global_api_server->get_noise_ctx();
   if (!ctx.has_psk()) {
-    http_response::send_error(request, 404, "api_key_not_set");
+    http_response::send_error_info(request, 404, "api_key_not_set", "api_key_not_set", "error", "{}");
     return;
   }
   const auto api_key = json_escape(encode_base64_psk(ctx.get_psk()).c_str());
@@ -107,14 +107,14 @@ void SystemHandler::handle_api_key_(AsyncWebServerRequest *request) {
   stream->printf("{\"ok\":true,\"apiKey\":\"%s\",\"visibleSeconds\":30}", api_key.c_str());
   request->send(stream);
 #else
-  http_response::send_error(request, 503, "api_key_unsupported");
+  http_response::send_error_info(request, 503, "api_key_unsupported", "api_key_unsupported", "error", "{}");
 #endif
 }
 
 void SystemHandler::handle_ha_setup_handoff_(AsyncWebServerRequest *request) {
 #ifdef USE_ESP32
   if (wifi::global_wifi_component == nullptr) {
-    http_response::send_error(request, 503, "wifi_unavailable");
+    http_response::send_error_info(request, 503, "wifi_unavailable", "wifi_unavailable", "error", "{}");
     return;
   }
   wifi_config_t config{};
@@ -123,15 +123,18 @@ void SystemHandler::handle_ha_setup_handoff_(AsyncWebServerRequest *request) {
   if (config_err != ESP_OK || ssid_len == 0) {
     ESP_LOGE(TAG, "HA setup handoff requested without STA config config=%d ssid_len=%u", static_cast<int>(config_err),
              static_cast<unsigned>(ssid_len));
-    http_response::send_error(request, 409, "wifi_not_ready");
+    http_response::send_error_info(request, 409, "wifi_not_ready", "wifi_not_ready", "warning", "{}");
     return;
   }
   // User-confirmed handoff: ESP-IDF has validated Wi-Fi, now ESPHome resumes native API ownership.
   ESP_LOGI(TAG, "HA setup handoff accepted, waiting for native API client");
-  request->send(200, "application/json", "{\"ok\":true,\"message\":\"ha_setup_handoff_started\",\"waitSeconds\":10}");
+  request->send(200, "application/json",
+                "{\"ok\":true,\"message\":\"ha_setup_handoff_started\",\"waitSeconds\":10,"
+                "\"statusInfo\":{\"code\":\"ha_handoff_started\",\"severity\":\"info\","
+                "\"detail\":{\"waitSeconds\":10}}}");
   this->server_->handoff_wifi_to_esphome_after(350);
 #else
-  http_response::send_error(request, 503, "wifi_unsupported");
+  http_response::send_error_info(request, 503, "wifi_unsupported", "wifi_unsupported", "error", "{}");
 #endif
 }
 
@@ -210,20 +213,23 @@ void SystemHandler::handle_reset_(AsyncWebServerRequest *request) {
   const bool wifi_reset_scheduled = reset_wifi;
 
   if (!reset_settings && !reset_wifi && !reset_stats) {
-    http_response::send_error(request, 400, "nothing_selected");
+    http_response::send_error_info(request, 400, "nothing_selected", "nothing_selected", "warning",
+                                   R"({"target":"system_reset"})");
     return;
   }
 
   if (reset_settings) {
     if (!this->reset_settings_(&api_key_reset, &floorplan_reset, &device_config_reset)) {
-      http_response::send_error(request, 500, "settings_reset_failed");
+      http_response::send_error_info(request, 500, "settings_reset_failed", "settings_reset_failed", "error",
+                                     R"({"target":"settings"})");
       return;
     }
   }
 
   if (reset_stats) {
     if (!this->reset_stats_()) {
-      http_response::send_error(request, 500, "stats_reset_failed");
+      http_response::send_error_info(request, 500, "stats_reset_failed", "stats_reset_failed", "error",
+                                     R"({"target":"stats"})");
       return;
     }
     stats_reset = true;
@@ -292,6 +298,8 @@ void SystemHandler::handle_status_(AsyncWebServerRequest *request) {
   const bool api_connected = false;
   const bool api_warning = false;
 #endif
+  const char *api_status_code = api_connected ? "api_client_connected" : (api_warning ? "api_client_waiting" : "api_client_idle");
+  const char *api_status_severity = (!api_connected && api_warning) ? "warning" : "info";
   uint32_t flash_total = 0;
   if (esp_flash_get_size(nullptr, &flash_total) != ESP_OK) {
     flash_total = 0;
@@ -318,7 +326,8 @@ void SystemHandler::handle_status_(AsyncWebServerRequest *request) {
         "\"device\":{\"type\":\"presence-sensor\",\"id\":\"%s\",\"name\":\"%s\",\"dashboardPath\":\"/dashboard\"},"
         "\"network\":{\"ip\":\"%s\",\"mac\":\"%s\",\"host\":\"%s\"},"
         "\"firmware\":{\"version\":\"%s\",\"buildTime\":\"%s %s\",\"uptimeSeconds\":%lld},"
-        "\"api\":{\"connected\":%s,\"warning\":%s},"
+        "\"api\":{\"connected\":%s,\"warning\":%s,"
+        "\"statusInfo\":{\"code\":\"%s\",\"severity\":\"%s\",\"detail\":{}}},"
         "\"boot\":{\"initialGuardActive\":%s,\"guardSeconds\":%lld},"
         "\"dashboard\":{\"version\":\"%s\",\"gzipBytes\":%u},"
         "\"schema\":{\"config\":%d,\"floorplan\":%d,\"stats\":%d},"
@@ -334,7 +343,7 @@ void SystemHandler::handle_status_(AsyncWebServerRequest *request) {
         "\"bluetooth\":{\"enabled\":true,\"connected\":false}}",
         device_id.c_str(), device_name.c_str(), ip_buf, mac_buf, host_name.c_str(), dashboard_assets::FIRMWARE_VERSION,
         __DATE__, __TIME__, static_cast<long long>(uptime_seconds),
-        api_connected ? "true" : "false", api_warning ? "true" : "false",
+        api_connected ? "true" : "false", api_warning ? "true" : "false", api_status_code, api_status_severity,
         boot_guard_active ? "true" : "false", static_cast<long long>(BOOT_GUARD_SECONDS),
         dashboard_assets::DASHBOARD_VERSION, static_cast<unsigned>(dashboard_assets::DASHBOARD_TOTAL_GZ_SIZE),
         dashboard_assets::CONFIG_SCHEMA_VERSION, dashboard_assets::FLOORPLAN_SCHEMA_VERSION,

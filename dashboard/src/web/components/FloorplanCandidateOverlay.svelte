@@ -1,9 +1,12 @@
 ﻿<script>
+  import { roomCandidatePoints, roomCandidatePointString } from "../floorplan/room-candidate-points";
+
   let {
     transformStyle = "",
     candidates = [],
     selectedCandidateId = "",
     selectedCandidateVertexIndex = -1,
+    focusSelectedCandidate = false,
     selectionLocked = false,
     imageWidth = 1,
     imageHeight = 1,
@@ -21,7 +24,6 @@
     snapWallSegments = [],
     wallMaskCells = [],
     showWallMaskCells = false,
-    showCandidateDebug = false,
     ocrItems = [],
     showOcrItems = false,
     showRoomSizeBounds = false,
@@ -44,65 +46,17 @@
     onCandidateVertexMoveEnd
   } = $props();
 
+  const VERTEX_DRAG_CLICK_TOLERANCE_PX = 4;
+  const VERTEX_DRAG_DOUBLE_CLICK_SUPPRESS_MS = 350;
+  const VERTEX_INSERT_DOUBLE_CLICK_SUPPRESS_MS = 700;
+
   let draggedVertex = null;
   let draggedSplitPoint = null;
-
-  function rectPoints(rect) {
-    const x1 = rect.x;
-    const y1 = rect.y;
-    const x2 = rect.x + rect.width;
-    const y2 = rect.y + rect.height;
-    return `${x1},${y1} ${x2},${y1} ${x2},${y2} ${x1},${y2}`;
-  }
-
-  function candidatePoints(candidate) {
-    if (candidate.shape === "polygon" && candidate.points?.length) {
-      return candidate.points.map(([x, y]) => `${x},${y}`).join(" ");
-    }
-    return rectPoints(candidate.rect);
-  }
-
-  function candidatePointArray(candidate) {
-    if (candidate.shape === "polygon" && candidate.points?.length) {
-      return candidate.points;
-    }
-    const x1 = candidate.rect.x;
-    const y1 = candidate.rect.y;
-    const x2 = candidate.rect.x + candidate.rect.width;
-    const y2 = candidate.rect.y + candidate.rect.height;
-    return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
-  }
-
-  function outerCandidateBounds(items) {
-    const points = items
-      .filter((candidate) => candidate.status !== "rejected")
-      .flatMap(candidatePointArray);
-    if (!points.length) return null;
-
-    const minX = Math.max(0, Math.min(...points.map(([x]) => x)));
-    const minY = Math.max(0, Math.min(...points.map(([, y]) => y)));
-    const maxX = Math.min(imageWidth, Math.max(...points.map(([x]) => x)));
-    const maxY = Math.min(imageHeight, Math.max(...points.map(([, y]) => y)));
-    const width = maxX - minX;
-    const height = maxY - minY;
-    if (width <= 0 || height <= 0) return null;
-
-    return {
-      x: minX,
-      y: minY,
-      width,
-      height,
-      corners: [
-        [minX, minY],
-        [maxX, minY],
-        [maxX, maxY],
-        [minX, maxY]
-      ]
-    };
-  }
+  let suppressVertexDoubleClickUntil = 0;
+  let suppressInsertedVertexDoubleClick = null;
 
   function candidateBounds(candidate) {
-    const points = candidatePointArray(candidate);
+    const points = roomCandidatePoints(candidate);
     const minX = Math.max(0, Math.min(...points.map(([x]) => x)));
     const minY = Math.max(0, Math.min(...points.map(([, y]) => y)));
     const maxX = Math.min(imageWidth, Math.max(...points.map(([x]) => x)));
@@ -116,7 +70,7 @@
   }
 
   function candidateEditEdges(candidate) {
-    const points = candidatePointArray(candidate);
+    const points = roomCandidatePoints(candidate);
     return points.map(([x1, y1], index) => {
       const [x2, y2] = points[(index + 1) % points.length];
       return { index, x1, y1, x2, y2 };
@@ -148,19 +102,6 @@
 
   function labelY(candidate) {
     return candidate.rect.y + 18;
-  }
-
-  function debugLabel(candidate) {
-    if (!candidate.debug) return "";
-    if (candidate.debug.reason === "external") {
-      return `external ${Math.round((candidate.debug.externalRatio ?? 0) * 100)}%`;
-    }
-    const { finalPoints, rawPoints, closedLoop } = candidate.debug;
-    return `pts ${finalPoints ?? "-"} / raw ${rawPoints ?? "-"} / ${closedLoop ? "closed" : "open"}`;
-  }
-
-  function pixelSizeLabel(candidate) {
-    return `${Math.round(candidate.rect.width)} x ${Math.round(candidate.rect.height)}px`;
   }
 
   function handleCandidateKeydown(event, id) {
@@ -265,6 +206,11 @@
     const point = svgPointFromEvent(event);
     if (!point) return;
     onCandidateVertexAdd?.(id, edgeIndex, point);
+    suppressInsertedVertexDoubleClick = {
+      id,
+      index: edgeIndex + 1,
+      until: Date.now() + VERTEX_INSERT_DOUBLE_CLICK_SUPPRESS_MS
+    };
   }
 
   function handleCandidateEdgeKeydown(event, id, edge) {
@@ -274,9 +220,27 @@
       x: (edge.x1 + edge.x2) / 2,
       y: (edge.y1 + edge.y2) / 2
     });
+    suppressInsertedVertexDoubleClick = {
+      id,
+      index: edge.index + 1,
+      until: Date.now() + VERTEX_INSERT_DOUBLE_CLICK_SUPPRESS_MS
+    };
   }
 
   function handleCandidateVertexDoubleClick(event, id, index) {
+    if (
+      Date.now() < suppressVertexDoubleClickUntil ||
+      (
+        suppressInsertedVertexDoubleClick &&
+        Date.now() < suppressInsertedVertexDoubleClick.until &&
+        suppressInsertedVertexDoubleClick.id === id &&
+        suppressInsertedVertexDoubleClick.index === index
+      )
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     onCandidateVertexDelete?.(id, index);
@@ -297,7 +261,15 @@
 
   function handleCandidateVertexPointerDown(event, candidate, index) {
     event.stopPropagation();
-    draggedVertex = { id: candidate.id, index, pointerId: event.pointerId, target: event.currentTarget };
+    draggedVertex = {
+      id: candidate.id,
+      index,
+      pointerId: event.pointerId,
+      target: event.currentTarget,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false
+    };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     onCandidateVertexMoveStart?.(candidate.id, index);
   }
@@ -318,6 +290,9 @@
     if (!draggedVertex) return;
     const point = svgPointFromEvent(event);
     if (!point) return;
+    if (Math.hypot(event.clientX - draggedVertex.startClientX, event.clientY - draggedVertex.startClientY) > VERTEX_DRAG_CLICK_TOLERANCE_PX) {
+      draggedVertex.moved = true;
+    }
     onCandidateVertexMove?.(draggedVertex.id, draggedVertex.index, point);
   }
 
@@ -329,14 +304,18 @@
     }
     if (!draggedVertex) return;
     const id = draggedVertex.id;
+    const moved = draggedVertex.moved;
     draggedVertex.target?.releasePointerCapture?.(draggedVertex.pointerId);
     draggedVertex = null;
+    if (moved) {
+      suppressVertexDoubleClickUntil = Date.now() + VERTEX_DRAG_DOUBLE_CLICK_SUPPRESS_MS;
+    }
     onCandidateVertexMoveEnd?.(id);
   }
 </script>
 
 <svg
-  class="floorplan-candidate-layer"
+  class={`floorplan-candidate-layer ${focusSelectedCandidate ? "focus-selected-candidate" : ""}`}
   viewBox={`0 0 ${imageWidth} ${imageHeight}`}
   preserveAspectRatio="none"
   style={transformStyle}
@@ -375,27 +354,6 @@
     </g>
   {/if}
 
-  {#if showCandidateDebug}
-  {#each [outerCandidateBounds(candidates)].filter(Boolean) as outerBounds}
-    <g class="floorplan-outer-bounds">
-      <rect
-        x={outerBounds.x}
-        y={outerBounds.y}
-        width={outerBounds.width}
-        height={outerBounds.height}
-      >
-        <title>諛??꾨낫 理쒖쇅怨?湲곗? 諛뺤뒪</title>
-      </rect>
-      {#each outerBounds.corners as corner}
-        <circle cx={corner[0]} cy={corner[1]} r="5" />
-      {/each}
-      <text x={outerBounds.x + 8} y={Math.max(14, outerBounds.y - 10)}>
-        {Math.round(outerBounds.width)} x {Math.round(outerBounds.height)}px
-      </text>
-    </g>
-  {/each}
-  {/if}
-
   {#if showRoomSizeBounds}
     <g class="floorplan-room-size-bounds">
       {#each candidates.filter((candidate) => candidate.status !== "rejected" && candidate.id === selectedCandidateId) as candidate}
@@ -416,16 +374,8 @@
       onclick={() => handleCandidateSelect(candidate.id)}
       onkeydown={(event) => handleCandidateKeydown(event, candidate.id)}
     >
-      <polygon class="floorplan-candidate-shape" points={candidatePoints(candidate)} />
+      <polygon class="floorplan-candidate-shape" points={roomCandidatePointString(candidate)} />
       <text class="floorplan-candidate-label" x={labelX(candidate)} y={labelY(candidate)}>{candidate.name}</text>
-      {#if showCandidateDebug}
-      <text class="floorplan-candidate-score" x={labelX(candidate)} y={labelY(candidate) + 16}>
-        {candidate.confidence}% {debugLabel(candidate)}
-      </text>
-      <text class="floorplan-candidate-size" x={labelX(candidate)} y={labelY(candidate) + 30}>
-        {pixelSizeLabel(candidate)}
-      </text>
-      {/if}
     </g>
   {/each}
 
@@ -446,7 +396,7 @@
         />
       {/each}
     {/if}
-    {#each candidatePointArray(candidate) as point, index}
+    {#each roomCandidatePoints(candidate) as point, index}
       <g class="floorplan-candidate-vertex manual">
           <circle
             cx={point[0]}

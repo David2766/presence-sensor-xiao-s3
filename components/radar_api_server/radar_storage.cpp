@@ -3,6 +3,8 @@
 #include "esphome/core/log.h"
 
 #include <algorithm>
+#include <memory>
+#include <new>
 
 namespace esphome {
 namespace radar_api_server {
@@ -21,6 +23,7 @@ static constexpr uint32_t DEVICE_CONFIG_MAX_SIZE = 64 * 1024;
 static constexpr uint32_t STATS_OFFSET = DEVICE_CONFIG_OFFSET + DEVICE_CONFIG_MAX_SIZE;
 static constexpr uint32_t STATS_MAX_SIZE = 64 * 1024;
 static constexpr uint32_t IMAGE_OFFSET = STATS_OFFSET + STATS_MAX_SIZE;
+static constexpr uint32_t HASH_STREAM_CHUNK_SIZE = 512;
 static_assert(IMAGE_OFFSET == FLASH_SECTOR_SIZE + 512 * 1024, "image offset must remain compatible");
 
 static uint32_t round_up_sector(uint32_t size) {
@@ -95,6 +98,30 @@ bool RadarStorage::read_payload(RadarPayloadTarget target, std::string *out) {
   return this->read_blob_(this->payload_offset_(target), size, out);
 }
 
+bool RadarStorage::payload_info(RadarPayloadTarget target, uint32_t *offset, uint32_t *size) {
+  RadarStorageHeader header{};
+  if (!this->read_header_(&header))
+    return false;
+
+  const uint32_t payload_size = this->payload_size_(target, header);
+  if (payload_size == 0)
+    return false;
+
+  if (offset != nullptr)
+    *offset = this->payload_offset_(target);
+  if (size != nullptr)
+    *size = payload_size;
+  return true;
+}
+
+bool RadarStorage::read_storage_range(uint32_t offset, uint8_t *out, uint32_t size) {
+  if (out == nullptr || size == 0)
+    return false;
+  if (!this->ensure_partition() || offset > this->partition_->size || size > this->partition_->size - offset)
+    return false;
+  return esp_partition_read(this->partition_, offset, out, size) == ESP_OK;
+}
+
 bool RadarStorage::write_payload(RadarPayloadTarget target, const uint8_t *data, uint32_t size) {
   RadarStorageHeader header{};
   if (!this->read_header_(&header))
@@ -103,8 +130,16 @@ bool RadarStorage::write_payload(RadarPayloadTarget target, const uint8_t *data,
 }
 
 bool RadarStorage::start_upload(RadarPayloadTarget target, uint32_t size, uint32_t session_id) {
-  if (session_id == 0 || size == 0 || size > this->payload_max_size(target))
+  this->last_upload_result_ = RadarUploadResult::OK;
+  const uint32_t max_size = this->payload_max_size(target);
+  if (session_id == 0 || size == 0) {
+    this->last_upload_result_ = RadarUploadResult::INVALID_REQUEST;
     return false;
+  }
+  if (size > max_size) {
+    this->last_upload_result_ = RadarUploadResult::PAYLOAD_TOO_LARGE;
+    return false;
+  }
 
   RadarStorageHeader header{};
   if (!this->read_header_(&header))
@@ -116,6 +151,7 @@ bool RadarStorage::start_upload(RadarPayloadTarget target, uint32_t size, uint32
       ESP_LOGW(STORAGE_TAG, "upload start rejected target=%u active_target=%u session=%08x active_session=%08x",
                static_cast<unsigned>(target), static_cast<unsigned>(header.upload_target),
                static_cast<unsigned>(session_id), static_cast<unsigned>(upload_session_id(header)));
+      this->last_upload_result_ = RadarUploadResult::SESSION_MISMATCH;
       return false;
     }
     if (upload_session_id(header) == session_id && header.upload_size == size) {
@@ -125,10 +161,14 @@ bool RadarStorage::start_upload(RadarPayloadTarget target, uint32_t size, uint32
     }
   }
 
-  if (!this->ensure_partition())
+  if (!this->ensure_partition()) {
+    this->last_upload_result_ = RadarUploadResult::STORAGE_FAILED;
     return false;
-  if (esp_partition_erase_range(this->partition_, this->payload_offset_(target), round_up_sector(size)) != ESP_OK)
+  }
+  if (esp_partition_erase_range(this->partition_, this->payload_offset_(target), round_up_sector(size)) != ESP_OK) {
+    this->last_upload_result_ = RadarUploadResult::STORAGE_FAILED;
     return false;
+  }
 
   header.upload_target = expected_upload_target;
   header.upload_size = size;
@@ -138,15 +178,21 @@ bool RadarStorage::start_upload(RadarPayloadTarget target, uint32_t size, uint32
            static_cast<unsigned>(target), static_cast<unsigned>(header.upload_target),
            static_cast<unsigned>(session_id), static_cast<unsigned>(size),
            static_cast<unsigned>(this->payload_offset_(target)));
-  return this->write_header_(header);
+  if (!this->write_header_(header)) {
+    this->last_upload_result_ = RadarUploadResult::STORAGE_FAILED;
+    return false;
+  }
+  return true;
 }
 
 bool RadarStorage::write_upload_chunk(RadarPayloadTarget target, uint32_t offset, const uint8_t *data,
                                           uint32_t size, uint32_t session_id) {
+  this->last_upload_result_ = RadarUploadResult::OK;
   RadarStorageHeader header{};
   if (!this->read_header_(&header)) {
     ESP_LOGE(STORAGE_TAG, "upload chunk read_header failed target=%u offset=%u size=%u",
              static_cast<unsigned>(target), static_cast<unsigned>(offset), static_cast<unsigned>(size));
+    this->last_upload_result_ = RadarUploadResult::READ_FAILED;
     return false;
   }
   const uint32_t expected_upload_target = upload_id_for_target(target);
@@ -158,6 +204,7 @@ bool RadarStorage::write_upload_chunk(RadarPayloadTarget target, uint32_t offset
              static_cast<unsigned>(header.upload_target), static_cast<unsigned>(session_id),
              static_cast<unsigned>(upload_session_id(header)), static_cast<unsigned>(header.upload_size),
              static_cast<unsigned>(header.upload_written), static_cast<unsigned>(offset), static_cast<unsigned>(size));
+    this->last_upload_result_ = RadarUploadResult::SESSION_MISMATCH;
     return false;
   }
   ESP_LOGD(STORAGE_TAG, "upload chunk target=%u offset=%u size=%u upload_size=%u upload_written=%u",
@@ -167,9 +214,11 @@ bool RadarStorage::write_upload_chunk(RadarPayloadTarget target, uint32_t offset
 }
 
 bool RadarStorage::commit_upload(RadarPayloadTarget target, uint32_t session_id) {
+  this->last_upload_result_ = RadarUploadResult::OK;
   RadarStorageHeader header{};
   if (!this->read_header_(&header)) {
     ESP_LOGE(STORAGE_TAG, "upload commit read_header failed target=%u", static_cast<unsigned>(target));
+    this->last_upload_result_ = RadarUploadResult::READ_FAILED;
     return false;
   }
   const uint32_t expected_upload_target = upload_id_for_target(target);
@@ -187,24 +236,26 @@ bool RadarStorage::commit_upload(RadarPayloadTarget target, uint32_t session_id)
              static_cast<unsigned>(header.upload_target), static_cast<unsigned>(session_id),
              static_cast<unsigned>(upload_session_id(header)), static_cast<unsigned>(header.upload_size),
              static_cast<unsigned>(header.upload_written));
+    this->last_upload_result_ = RadarUploadResult::SESSION_MISMATCH;
     return false;
   }
   if (header.upload_written < header.upload_size) {
     ESP_LOGE(STORAGE_TAG, "upload commit incomplete target=%u upload_size=%u upload_written=%u",
              static_cast<unsigned>(target), static_cast<unsigned>(header.upload_size),
              static_cast<unsigned>(header.upload_written));
+    this->last_upload_result_ = RadarUploadResult::INCOMPLETE;
     return false;
   }
 
-  std::string data;
-  if (!this->read_blob_(this->payload_offset_(target), header.upload_size, &data)) {
-    ESP_LOGE(STORAGE_TAG, "upload commit read_blob failed target=%u offset=%u size=%u",
+  uint32_t hash = 0;
+  if (!this->hash_blob_(this->payload_offset_(target), header.upload_size, &hash)) {
+    ESP_LOGE(STORAGE_TAG, "upload commit hash_blob failed target=%u offset=%u size=%u",
              static_cast<unsigned>(target), static_cast<unsigned>(this->payload_offset_(target)),
              static_cast<unsigned>(header.upload_size));
+    this->last_upload_result_ = RadarUploadResult::READ_FAILED;
     return false;
   }
 
-  const uint32_t hash = fnv1a_hash(reinterpret_cast<const uint8_t *>(data.data()), data.size());
   this->set_payload_metadata_(target, header.upload_size, hash, &header);
   header.upload_target = 0;
   header.upload_size = 0;
@@ -213,8 +264,12 @@ bool RadarStorage::commit_upload(RadarPayloadTarget target, uint32_t session_id)
   last_upload_target(&header) = expected_upload_target;
   upload_session_id(&header) = 0;
   ESP_LOGW(STORAGE_TAG, "upload commit target=%u session=%08x size=%u hash=%08x", static_cast<unsigned>(target),
-           static_cast<unsigned>(session_id), static_cast<unsigned>(data.size()), static_cast<unsigned>(hash));
-  return this->write_header_(header);
+           static_cast<unsigned>(session_id), static_cast<unsigned>(header.upload_size), static_cast<unsigned>(hash));
+  if (!this->write_header_(header)) {
+    this->last_upload_result_ = RadarUploadResult::STORAGE_FAILED;
+    return false;
+  }
+  return true;
 }
 
 bool RadarStorage::delete_payload(RadarPayloadTarget target) {
@@ -343,10 +398,37 @@ bool RadarStorage::write_header_(const RadarStorageHeader &header) {
 }
 
 bool RadarStorage::read_blob_(uint32_t offset, uint32_t size, std::string *out) {
-  if (!this->ensure_partition() || offset + size > this->partition_->size)
+  if (out == nullptr || !this->ensure_partition() || offset > this->partition_->size ||
+      size > this->partition_->size - offset)
     return false;
   out->resize(size);
   return esp_partition_read(this->partition_, offset, out->data(), size) == ESP_OK;
+}
+
+bool RadarStorage::hash_blob_(uint32_t offset, uint32_t size, uint32_t *hash) {
+  if (hash == nullptr || !this->ensure_partition() || offset > this->partition_->size ||
+      size > this->partition_->size - offset)
+    return false;
+
+  uint32_t value = 2166136261u;
+  std::unique_ptr<uint8_t[]> buffer(new (std::nothrow) uint8_t[HASH_STREAM_CHUNK_SIZE]);
+  if (!buffer) {
+    ESP_LOGE(STORAGE_TAG, "hash buffer allocation failed size=%u", static_cast<unsigned>(HASH_STREAM_CHUNK_SIZE));
+    return false;
+  }
+  uint32_t read = 0;
+  while (read < size) {
+    const uint32_t chunk = std::min<uint32_t>(HASH_STREAM_CHUNK_SIZE, size - read);
+    if (esp_partition_read(this->partition_, offset + read, buffer.get(), chunk) != ESP_OK)
+      return false;
+    for (uint32_t i = 0; i < chunk; i++) {
+      value ^= buffer[i];
+      value *= 16777619u;
+    }
+    read += chunk;
+  }
+  *hash = value;
+  return true;
 }
 
 bool RadarStorage::write_blob_(RadarPayloadTarget target, const uint8_t *data, uint32_t size,
@@ -377,6 +459,7 @@ bool RadarStorage::write_chunk_(RadarPayloadTarget target, uint32_t offset, cons
   if (!this->ensure_partition() || size == 0) {
     ESP_LOGE(STORAGE_TAG, "upload chunk invalid partition/size target=%u offset=%u size=%u",
              static_cast<unsigned>(target), static_cast<unsigned>(offset), static_cast<unsigned>(size));
+    this->last_upload_result_ = size == 0 ? RadarUploadResult::INVALID_REQUEST : RadarUploadResult::STORAGE_FAILED;
     return false;
   }
   const uint32_t max_size = this->payload_max_size(target);
@@ -387,6 +470,8 @@ bool RadarStorage::write_chunk_(RadarPayloadTarget target, uint32_t offset, cons
              static_cast<unsigned>(target), static_cast<unsigned>(offset), static_cast<unsigned>(size),
              static_cast<unsigned>(offset + size), static_cast<unsigned>(header->upload_size),
              static_cast<unsigned>(max_size), static_cast<unsigned>(header->upload_written));
+    this->last_upload_result_ =
+        header->upload_size > max_size ? RadarUploadResult::PAYLOAD_TOO_LARGE : RadarUploadResult::OFFSET_MISMATCH;
     return false;
   }
   const uint32_t write_offset = this->payload_offset_(target) + offset;
@@ -395,6 +480,7 @@ bool RadarStorage::write_chunk_(RadarPayloadTarget target, uint32_t offset, cons
     ESP_LOGE(STORAGE_TAG, "upload chunk partition_write failed target=%u write_offset=%u offset=%u size=%u err=%d",
              static_cast<unsigned>(target), static_cast<unsigned>(write_offset), static_cast<unsigned>(offset),
              static_cast<unsigned>(size), static_cast<int>(write_err));
+    this->last_upload_result_ = RadarUploadResult::STORAGE_FAILED;
     return false;
   }
 
@@ -404,6 +490,7 @@ bool RadarStorage::write_chunk_(RadarPayloadTarget target, uint32_t offset, cons
     ESP_LOGE(STORAGE_TAG, "upload chunk write_header failed target=%u upload_size=%u upload_written=%u",
              static_cast<unsigned>(target), static_cast<unsigned>(header->upload_size),
              static_cast<unsigned>(header->upload_written));
+    this->last_upload_result_ = RadarUploadResult::STORAGE_FAILED;
   }
   return header_ok;
 }

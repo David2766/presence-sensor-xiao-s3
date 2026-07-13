@@ -77,7 +77,7 @@ export interface RadarViewport {
   fovDegrees: number;
 }
 
-export type WebZoneType = "detection" | "filter" | "reduced" | "disabled";
+export type WebZoneType = "detection" | "filter" | "reduced" | "disabled" | "exit";
 
 export interface WebTarget {
   id: string;
@@ -149,11 +149,65 @@ export interface WebDeviceDebug {
     outOfRangeTargetCount?: number;
     remoteCandidateCount?: number;
   };
+  room?: {
+    configured?: boolean;
+    boundaryPointCount?: number;
+    insideTargetCount?: number;
+    outsideTargetCount?: number;
+  };
+  exit?: {
+    active?: boolean;
+    zoneCount?: number;
+    zoneMask?: number;
+    targetCount?: number;
+    lastSeenAgeMs?: number | null;
+  };
+  tracker?: {
+    presence?: boolean;
+    motion?: boolean;
+    state?: string;
+    reason?: string;
+    dropReason?: string;
+    dropMs?: number;
+    exitTrackCount?: number;
+    trackScore?: number;
+    inputDetectionCount?: number;
+    activeTrackCount?: number;
+    tentativeTrackCount?: number;
+    confirmedTrackCount?: number;
+    coastingTrackCount?: number;
+    movingTrackCount?: number;
+    stillTrackCount?: number;
+    tracks?: Array<{
+      state?: string;
+      trackScore?: number;
+      observedFrames?: number;
+      missedFrames?: number;
+      recentHits?: number;
+      reason?: string;
+      stateChangedMs?: number;
+      moving?: boolean;
+      x?: number;
+      y?: number;
+      vx?: number;
+      vy?: number;
+      speedCmS?: number;
+      distance?: number;
+      radialVelocityCmS?: number;
+      direction?: string;
+      exitMask?: number;
+      exitAgeMs?: number | null;
+      exitRecent?: boolean;
+      roomState?: string;
+    }>;
+  };
 }
 
 export interface WebDeviceConfig {
   version: number;
   integrationMode?: "unknown" | "edge" | "ha";
+  trackerAssistPresence?: boolean;
+  legacyPresenceFallback?: boolean;
   zones: WebZone[];
   calibrationZones?: WebZone[];
   floorplan?: {
@@ -166,6 +220,12 @@ export interface WebDeviceConfig {
       originY: number;
       rotation: number;
       scale: number;
+    };
+    room?: {
+      id: string;
+      name: string;
+      source: "stored_room";
+      boundary?: Array<[number, number]>;
     };
   };
 }

@@ -20,7 +20,6 @@ class StatsHandler {
   RadarStorage *storage_;
 
   void handle_get_stats_(AsyncWebServerRequest *request);
-  void handle_post_stats_(AsyncWebServerRequest *request);
   void handle_upload_start_(AsyncWebServerRequest *request);
   void handle_upload_chunk_(AsyncWebServerRequest *request);
   void handle_upload_commit_(AsyncWebServerRequest *request);

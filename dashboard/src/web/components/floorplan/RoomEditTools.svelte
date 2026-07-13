@@ -1,5 +1,6 @@
 <script>
   let {
+    messages,
     candidates = [],
     selectedCandidateId = "",
     manualRoomDraft = { active: false, points: [] },
@@ -11,6 +12,8 @@
     onStartSnapEdit
   } = $props();
 
+  const text = $derived(messages.floorplan.editTools);
+
   function activeCandidateCount() {
     return candidates.filter((candidate) => candidate.status !== "rejected").length;
   }
@@ -21,11 +24,11 @@
 </script>
 
 <div class="floorplan-edit-tool-card" data-active={hasActiveTool() ? "true" : "false"}>
-  <strong>편집 도구</strong>
+  <strong>{text.title}</strong>
 
   <div class="floorplan-edit-tool-grid">
-    <button type="button" onclick={() => onStartSplitDraft?.()} disabled={hasActiveTool() || !selectedCandidateId}>방 나누기</button>
-    <button type="button" onclick={onStartMergeDraft} disabled={hasActiveTool() || activeCandidateCount() < 2}>방 합치기</button>
-    <button type="button" onclick={() => onStartSnapEdit?.(selectedCandidateId)} disabled={hasActiveTool() || !selectedCandidateId}>벽에 맞추기</button>
+    <button type="button" onclick={() => onStartSplitDraft?.()} disabled={hasActiveTool() || !selectedCandidateId}>{text.split}</button>
+    <button type="button" onclick={onStartMergeDraft} disabled={hasActiveTool() || activeCandidateCount() < 2}>{text.merge}</button>
+    <button type="button" onclick={() => onStartSnapEdit?.(selectedCandidateId)} disabled={hasActiveTool() || !selectedCandidateId}>{text.snap}</button>
   </div>
 </div>

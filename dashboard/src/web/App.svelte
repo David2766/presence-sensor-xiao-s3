@@ -1,20 +1,11 @@
 ﻿<script lang="ts">
   import { onMount } from "svelte";
+  import { apiErrorMessage } from "./api/api-message";
   import { deviceApi } from "./api/device-api";
-  import { mockApi } from "./api/mock-api";
-  import BackupPanel from "./components/BackupPanel.svelte";
+  import { deviceStorageQueue } from "./api/device-storage-queue";
   import CalibrationDialog from "./components/CalibrationDialog.svelte";
-  import CalibrationPanel from "./components/CalibrationPanel.svelte";
-  import DashboardPanel from "./components/DashboardPanel.svelte";
-  import DebugPanel from "./components/DebugPanel.svelte";
-  import FloorplanPanel from "./components/FloorplanPanel.svelte";
-  import MapToolbar from "./components/MapToolbar.svelte";
   import ProtectedZoneDialog from "./components/ProtectedZoneDialog.svelte";
-  import RadarScene from "./components/RadarScene.svelte";
-  import SetupMockPanel from "./components/SetupMockPanel.svelte";
   import ShrinkConfirmDialog from "./components/ShrinkConfirmDialog.svelte";
-  import StatsPanel from "./components/StatsPanel.svelte";
-  import ZonePanel from "./components/ZonePanel.svelte";
   import {
     loadFloorplanStorageDocument,
     loadFloorplanStorageImage,
@@ -22,10 +13,11 @@
     saveFloorplanStorage,
     saveFloorplanStorageDocument
   } from "./floorplan/floorplan-storage-client";
-  import { mockFloorplanStorageFetch, resetMockFloorplanStorage } from "./floorplan/mock-floorplan-storage";
+  import { buildFloorplanRoomContext } from "./floorplan/floorplan-room-context";
   import { MAX_SOFTWARE_ZONES } from "../core/constants";
   import type { BackupFloorplanData } from "../core/config-backup";
-  import { calibrationType, isEmptyZone, normalizeSoftwareConfig, zoneDisplayName } from "../core/zones";
+  import type { FloorplanStorageDocument } from "../core/floorplan/floorplan-storage";
+  import { calibrationType, isEmptyZone, normalizeSoftwareConfig } from "../core/zones";
   import { createBackupRestore } from "./state/useBackupRestore.svelte";
   import { createCalibrationRun } from "./state/useCalibrationRun.svelte";
   import { createConfigHistory } from "./state/useConfigHistory.svelte";
@@ -33,6 +25,14 @@
   import { createRadarInteraction } from "./state/useRadarInteraction.svelte";
   import { createRadarPolling } from "./state/useRadarPolling.svelte";
   import { createZoneEditor } from "./state/useZoneEditor.svelte";
+  import { APP_SELECTION_PRESERVE_SELECTOR } from "./dom/selection-preserve";
+  import { languageOptions } from "./i18n";
+  import { createI18n } from "./i18n/useI18n.svelte";
+  import BackupPage from "./pages/BackupPage.svelte";
+  import DashboardPage from "./pages/DashboardPage.svelte";
+  import FloorplanPage from "./pages/FloorplanPage.svelte";
+  import StatsPage from "./pages/StatsPage.svelte";
+  import ZonesPage from "./pages/ZonesPage.svelte";
   import type {
     DeviceApi,
     FirmwareUploadProgress,
@@ -45,31 +45,51 @@
     WebZoneType
   } from "./types";
 
+  type AppTab = "dashboard" | "zones" | "floorplan" | "stats" | "backup";
+
+  type AppProps = {
+    api?: DeviceApi;
+    demoMode?: boolean;
+    mockMode?: boolean;
+    deviceBaseUrl?: string;
+    floorplanStorageFetcher?: typeof fetch;
+    onResetDemoStorage?: () => void;
+    haSetupHandoffRequired?: boolean;
+  };
+
   const searchParams = new URLSearchParams(window.location.search);
-  const deviceBaseUrl = searchParams.get("device")?.trim() || "";
-  const isDemoHost = window.location.hostname === "localhost" || window.location.hostname.endsWith(".github.io");
-  const useSetupMock = (searchParams.get("setup") === "1" && isDemoHost) || window.location.hostname.endsWith(".github.io");
-  const useDemoMode = useSetupMock || searchParams.get("demo") === "1" || window.location.hostname.endsWith(".github.io");
-  const useMockApi = useDemoMode || searchParams.get("mock") === "1" || (!deviceBaseUrl && window.location.hostname === "localhost");
-  const requiresHaSetupHandoff = searchParams.get("setup") === "1" && !useMockApi;
-  const api: DeviceApi = useMockApi ? mockApi : deviceApi;
-  const floorplanStorageFetcher = useMockApi ? mockFloorplanStorageFetch : undefined;
-  const DEMO_SETUP_COMPLETE_KEY = "presence-sensor-demo-setup-complete";
+  const defaultDeviceBaseUrl = searchParams.get("device")?.trim() || "";
+  let {
+    api = deviceApi,
+    demoMode = false,
+    mockMode = false,
+    deviceBaseUrl = defaultDeviceBaseUrl,
+    floorplanStorageFetcher,
+    onResetDemoStorage,
+    haSetupHandoffRequired = searchParams.get("setup") === "1"
+  }: AppProps = $props();
+
+  function requiresHaSetupHandoff(): boolean {
+    return haSetupHandoffRequired && !mockMode;
+  }
+
+  const i18n = createI18n();
   type IntegrationMode = "unknown" | "edge" | "ha";
   type HaSetupGateMode = "select" | "edge" | "ha-setup" | "api-warmup" | "api-warning";
 
-  const zoneTypeLabels: Record<WebZoneType, string> = {
-    detection: "탐지",
-    filter: "필터",
-    reduced: "둔감",
-    disabled: "제외"
-  };
+  const zoneTypeLabels = $derived<Record<WebZoneType, string>>({
+    detection: i18n.msg.zones.typeLabels.detection,
+    filter: i18n.msg.zones.typeLabels.filter,
+    reduced: i18n.msg.zones.typeLabels.reduced,
+    disabled: i18n.msg.zones.typeLabels.disabled,
+    exit: i18n.msg.zones.typeLabels.exit
+  });
 
-  const calibrationTypeLabels: Record<Extract<WebZoneType, "filter" | "reduced" | "disabled">, string> = {
-    filter: "필터",
-    reduced: "둔감",
-    disabled: "제외"
-  };
+  const calibrationTypeLabels = $derived<Record<Extract<WebZoneType, "filter" | "reduced" | "disabled">, string>>({
+    filter: i18n.msg.zones.typeLabels.filter,
+    reduced: i18n.msg.zones.typeLabels.reduced,
+    disabled: i18n.msg.zones.typeLabels.disabled
+  });
 
   let state = $state<WebDeviceState | null>(null);
   let config = $state<WebDeviceConfig | null>(null);
@@ -77,7 +97,6 @@
   let statsLoading = $state(false);
   let statsError = $state("");
   let systemStatus = $state<WebSystemStatus | null>(null);
-  let setupMockCompleted = $state(useSetupMock && localStorage.getItem(DEMO_SETUP_COMPLETE_KEY) === "1");
   let systemStatusLoading = $state(false);
   let systemStatusLoaded = $state(false);
   let systemStatusError = $state("");
@@ -88,25 +107,34 @@
   let controlActionBusy = $state(false);
   let integrationModeActionBusy = $state(false);
   let selectedPointIndex = $state(-1);
-  let statusText = $state("연결 대기");
+  let statusText = $state(i18n.msg.app.statusWaiting);
   let statusTone = $state<"ok" | "warn" | "error">("warn");
   let errorText = $state("");
   let debugMode = $state(false);
-  let activeTab = $state<"dashboard" | "zones" | "floorplan" | "stats" | "backup">("dashboard");
+  let activeTab = $state<AppTab>("dashboard");
+  let floorplanHasUnsavedChanges = $state(false);
+  let languageMenuOpen = $state(false);
   let activeZoneTool = $state<"" | "zones" | "calibration">("");
-  let haSetupGateVisible = $state(requiresHaSetupHandoff);
-  let haSetupGateMode = $state<HaSetupGateMode>(requiresHaSetupHandoff ? "select" : "api-warmup");
+  let haSetupGateVisible = $state(requiresHaSetupHandoff());
+  let haSetupGateMode = $state<HaSetupGateMode>(requiresHaSetupHandoff() ? "select" : "api-warmup");
   let haSetupGateBusy = $state(false);
-  let haSetupGateMessage = $state(requiresHaSetupHandoff ? "사용할 연동 방식을 선택하세요." : "초기 연동 상태를 확인합니다.");
+  let haSetupGateMessage = $state(requiresHaSetupHandoff() ? i18n.msg.app.setupModeSelectMessage : i18n.msg.app.setupInitialChecking);
   let haSetupGateDismissed = $state(false);
   let haSetupGateAllowContinue = $state(false);
 
-  const configSave = createConfigSave({
-    api,
-    getConfig: () => config,
-    setStatus,
-    errorMessage
-  });
+  function createAppConfigSave() {
+    return createConfigSave({
+      api,
+      getConfig: () => config,
+      setStatus,
+      errorMessage,
+      getSaveStatusLabels: () => i18n.msg.common.saveStatus,
+      savedMessage: () => i18n.msg.app.configSaved,
+      saveFailedMessage: (error) => i18n.msg.app.configSaveFailed(error)
+    });
+  }
+
+  const configSave = createAppConfigSave();
 
   const backupRestore = createBackupRestore({
     getConfig: () => config,
@@ -119,6 +147,7 @@
       sourceUrl: deviceBaseUrl || window.location.origin,
       name: "Radar Zone Configurator"
     }),
+    getMessages: () => i18n.msg,
     setStatus,
     errorMessage
   });
@@ -130,7 +159,7 @@
     },
     onRestore: (nextConfig) => {
       selectZone(nextConfig.zones[0]?.id || nextConfig.calibrationZones?.[0]?.id || "");
-      configSave.scheduleSave();
+      configSave.markPending();
       renderSceneNow();
     }
   });
@@ -139,7 +168,8 @@
     getConfig: () => config,
     getState: () => state,
     getCalibrationZoneCount: () => calibrationZones.length,
-    updateConfig: (mutator) => updateConfig(mutator),
+    getMessages: () => i18n.msg,
+    updateConfig: (mutator) => updateZoneDraftConfig(mutator),
     selectZone: (zoneId) => selectZone(zoneId),
     setStatus
   });
@@ -157,7 +187,8 @@
     getConfig: () => config,
     getZones: () => zones,
     getCalibrationZones: () => calibrationZones,
-    updateConfig: (mutator) => updateConfig(mutator),
+    getMessages: () => i18n.msg,
+    updateConfig: (mutator) => updateZoneDraftConfig(mutator),
     setStatus,
     onSelect: (_zoneId, resetPoint, render) => {
       radarInteraction.resetShrinkWarning();
@@ -176,28 +207,84 @@
     getCalibrationZones: () => calibrationZones,
     getSelectedZone: () => selectedZone,
     getSelectedPointIndex: () => selectedPointIndex,
+    getMessages: () => i18n.msg,
     setSelectedPointIndex: (pointIndex) => {
       selectedPointIndex = pointIndex;
     },
-    updateConfig,
+    updateConfig: updateZoneDraftConfig,
     pushHistory: configHistory.pushHistory,
-    scheduleSave: configSave.scheduleSave,
+    scheduleSave: configSave.markPending,
     selectZone,
     renderSceneNow,
     setStatus
   });
 
-  const updatedText = $derived(state ? new Date(state.updatedAt).toLocaleTimeString() : "-");
+  const updatedText = $derived(state ? formatClock(state.updatedAt) : "-");
   const activeTargetCount = $derived(state?.targets.filter((target) => target.active).length ?? 0);
   let appRuntimeStarted = false;
 
+  function defaultZoneNameIndex(name: string): string | null {
+    const match = /^(?:구역|Zone)\s*(\d+)$/.exec(name.trim());
+    return match?.[1] ?? null;
+  }
+
+  function defaultCalibrationNameIndex(name: string): string | null {
+    const match = /^(?:보정 구역|Correction zone)\s*(\d+)$/.exec(name.trim());
+    return match?.[1] ?? null;
+  }
+
+  function formatClock(timestamp: number): string {
+    return new Intl.DateTimeFormat(i18n.msg.language.code === "ko" ? "ko-KR" : "en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).format(new Date(timestamp));
+  }
+
+  function displayZoneName(zone: WebZone): string {
+    const name = zone.name?.trim() ?? "";
+    if (name) {
+      const defaultZoneIndex = defaultZoneNameIndex(name);
+      if (defaultZoneIndex) return i18n.msg.zones.zoneLabel(defaultZoneIndex);
+      const defaultCalibrationIndex = defaultCalibrationNameIndex(name);
+      if (defaultCalibrationIndex) return i18n.msg.zones.calibrationZoneLabel(defaultCalibrationIndex);
+      return name;
+    }
+    const zoneMatch = /^zone_(\d+)$/.exec(zone.id);
+    if (zoneMatch) return i18n.msg.zones.zoneLabel(zoneMatch[1]);
+    const calibrationMatch = /^calibration_(\d+)$/.exec(zone.id);
+    if (calibrationMatch) return i18n.msg.zones.calibrationZoneLabel(calibrationMatch[1]);
+    return zone.id;
+  }
+
   const selectedLabel = $derived(
     selectedZone
-      ? `${zoneDisplayName(selectedZone)} · ${zoneTypeLabels[selectedZone.type]}`
+      ? `${displayZoneName(selectedZone)} · ${zoneTypeLabels[selectedZone.type]}`
       : selectedCalibrationZone
-        ? `${zoneDisplayName(selectedCalibrationZone)} · 보정 구역 · ${calibrationLabel(selectedCalibrationZone)}`
-        : "선택 없음"
+        ? `${displayZoneName(selectedCalibrationZone)} · ${i18n.msg.zones.calibrationZone} · ${calibrationLabel(selectedCalibrationZone)}`
+        : i18n.msg.zones.noneSelected
   );
+
+  function hasUnsavedChanges(): boolean {
+    return configSave.hasPendingChanges || floorplanHasUnsavedChanges;
+  }
+
+  function handleBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!hasUnsavedChanges()) return;
+    event.preventDefault();
+    event.returnValue = "";
+  }
+
+  function setActiveTab(tab: AppTab): void {
+    if (tab === activeTab) return;
+    if (hasUnsavedChanges() && !window.confirm(i18n.msg.common.unsavedChangesConfirm)) return;
+    activeTab = tab;
+  }
+
+  function setFloorplanUnsavedChanges(dirty: boolean): void {
+    floorplanHasUnsavedChanges = dirty;
+  }
 
   function startAppRuntime(): void {
     if (appRuntimeStarted) return;
@@ -208,6 +295,7 @@
     window.addEventListener("pointerup", radarInteraction.handlePointerUp);
     window.addEventListener("pointercancel", radarInteraction.handlePointerUp);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("beforeunload", handleBeforeUnload);
     document.addEventListener("pointerdown", handleDocumentPointerDown, true);
   }
 
@@ -220,18 +308,13 @@
     window.removeEventListener("pointerup", radarInteraction.handlePointerUp);
     window.removeEventListener("pointercancel", radarInteraction.handlePointerUp);
     window.removeEventListener("keydown", handleKeyDown);
+    window.removeEventListener("beforeunload", handleBeforeUnload);
     document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
   }
 
   onMount(() => {
-    if (!useSetupMock) startAppRuntime();
+    startAppRuntime();
     return stopAppRuntime;
-  });
-
-  $effect(() => {
-    if (useSetupMock && setupMockCompleted) {
-      startAppRuntime();
-    }
   });
 
   $effect(() => {
@@ -251,9 +334,9 @@
       config = normalizeSoftwareConfig(await api.getConfig());
       zoneEditor.selectFirstAvailable();
       selectedPointIndex = -1;
-      setStatus("설정 로드 완료", "ok");
+      setStatus(i18n.msg.app.configLoaded, "ok");
     } catch (error) {
-      setStatus(`설정을 읽지 못했습니다. ${errorMessage(error)}`, "error");
+      setStatus(i18n.msg.app.configReadFailed(errorMessage(error)), "error");
     }
   }
 
@@ -262,9 +345,9 @@
       state = await api.getState();
       calibration.update();
       renderSceneNow();
-      setStatus(state.connected ? "연결됨" : "연결 대기", state.connected ? "ok" : "warn");
+      setStatus(state.connected ? i18n.msg.app.stateConnected : i18n.msg.app.statusWaiting, state.connected ? "ok" : "warn");
     } catch (error) {
-      setStatus(`상태를 읽지 못했습니다. ${errorMessage(error)}`, "error");
+      setStatus(i18n.msg.app.stateReadFailed(errorMessage(error)), "error");
     }
   }
 
@@ -275,7 +358,7 @@
       statsError = "";
     } catch (error) {
       statsError = errorMessage(error);
-      setStatus(`통계를 읽지 못했습니다: ${statsError}`, "error");
+      setStatus(i18n.msg.app.statsReadFailed(statsError), "error");
     } finally {
       statsLoading = false;
     }
@@ -284,7 +367,7 @@
   async function refreshSystemStatus(): Promise<void> {
     if (!api.getSystemStatus) {
       systemStatusLoaded = true;
-      systemStatusError = "시스템 정보 API가 준비되지 않았습니다.";
+      systemStatusError = i18n.msg.app.systemStatusApiNotReady;
       return;
     }
     systemStatusLoading = true;
@@ -326,15 +409,13 @@
         const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
         haSetupGateMessage =
           elapsedSeconds < 8
-            ? "네트워크가 잠시 불안정할 수 있습니다. Home Assistant API 연결 상태를 확인하는 중입니다."
-            : `Home Assistant API 연결을 기다리는 중입니다. ${elapsedSeconds}초 경과`;
+            ? i18n.msg.app.haApiWarmupChecking
+            : i18n.msg.app.haApiWaitingElapsed(elapsedSeconds);
       } catch (error) {
         systemStatusLoaded = true;
         systemStatusError = errorMessage(error);
         haSetupGateMessage =
-          attempt < 4
-            ? "기기가 네트워크를 정리하는 중입니다. 응답을 기다리고 있습니다."
-            : "기기 응답을 기다리는 중입니다. Wi-Fi가 잠시 전환될 수 있습니다.";
+          attempt < 4 ? i18n.msg.app.deviceNetworkPreparing : i18n.msg.app.deviceWaitingWifiSwitch;
       }
 
       await wait(1000);
@@ -346,7 +427,7 @@
   async function refreshControlStatus(): Promise<void> {
     if (!api.getControlStatus) {
       controlStatusLoaded = true;
-      controlStatusError = "제어 API가 준비되지 않았습니다.";
+      controlStatusError = i18n.msg.app.controlApiNotReady;
       return;
     }
     controlStatusLoading = true;
@@ -364,17 +445,17 @@
 
   async function setStatusLed(enabled: boolean): Promise<void> {
     if (!api.setStatusLed) {
-      controlStatusError = "Status LED 제어 API가 준비되지 않았습니다.";
+      controlStatusError = i18n.msg.app.statusLedApiNotReady;
       return;
     }
     controlActionBusy = true;
     try {
       await api.setStatusLed(enabled);
       await refreshControlStatus();
-      setStatus(enabled ? "Status LED를 켰습니다." : "Status LED를 껐습니다.", "ok");
+      setStatus(enabled ? i18n.msg.app.statusLedOn : i18n.msg.app.statusLedOff, "ok");
     } catch (error) {
       controlStatusError = errorMessage(error);
-      setStatus(`Status LED 제어 실패: ${controlStatusError}`, "error");
+      setStatus(i18n.msg.app.statusLedFailed(controlStatusError), "error");
     } finally {
       controlActionBusy = false;
     }
@@ -382,17 +463,17 @@
 
   async function setLedBlinkDuration(seconds: number): Promise<void> {
     if (!api.setLedBlinkDuration) {
-      controlStatusError = "LED 시간 제어 API가 준비되지 않았습니다.";
+      controlStatusError = i18n.msg.app.ledDurationApiNotReady;
       return;
     }
     controlActionBusy = true;
     try {
       await api.setLedBlinkDuration(seconds);
       await refreshControlStatus();
-      setStatus("LED 자동 꺼짐 시간을 변경했습니다.", "ok");
+      setStatus(i18n.msg.app.ledDurationChanged, "ok");
     } catch (error) {
       controlStatusError = errorMessage(error);
-      setStatus(`LED 시간 변경 실패: ${controlStatusError}`, "error");
+      setStatus(i18n.msg.app.ledDurationFailed(controlStatusError), "error");
     } finally {
       controlActionBusy = false;
     }
@@ -400,17 +481,37 @@
 
   async function setEnvironmentCorrection(enabled: boolean): Promise<void> {
     if (!api.setEnvironmentCorrection) {
-      controlStatusError = "온습도 보정 API가 준비되지 않았습니다.";
+      controlStatusError = i18n.msg.app.environmentCorrectionApiNotReady;
       return;
     }
     controlActionBusy = true;
     try {
       await api.setEnvironmentCorrection(enabled);
       await refreshControlStatus();
-      setStatus(enabled ? "온습도 보정을 켰습니다." : "온습도 보정을 껐습니다.", "ok");
+      setStatus(enabled ? i18n.msg.app.environmentCorrectionOn : i18n.msg.app.environmentCorrectionOff, "ok");
     } catch (error) {
       controlStatusError = errorMessage(error);
-      setStatus(`온습도 보정 변경 실패: ${controlStatusError}`, "error");
+      setStatus(i18n.msg.app.environmentCorrectionFailed(controlStatusError), "error");
+    } finally {
+      controlActionBusy = false;
+    }
+  }
+
+  async function setLegacyPresenceFallback(enabled: boolean): Promise<void> {
+    if (!config) return;
+    controlActionBusy = true;
+    const previousConfig = config;
+    const nextConfig = normalizeSoftwareConfig({
+      ...config,
+      legacyPresenceFallback: enabled
+    });
+    config = nextConfig;
+    try {
+      await api.saveConfig(nextConfig);
+      setStatus(enabled ? i18n.msg.app.legacyPresenceFallbackOn : i18n.msg.app.legacyPresenceFallbackOff, "ok");
+    } catch (error) {
+      config = previousConfig;
+      setStatus(i18n.msg.app.legacyPresenceFallbackFailed(errorMessage(error)), "error");
     } finally {
       controlActionBusy = false;
     }
@@ -418,17 +519,17 @@
 
   async function setTemperatureOffset(value: number): Promise<void> {
     if (!api.setTemperatureOffset) {
-      controlStatusError = "온도 보정 API가 준비되지 않았습니다.";
+      controlStatusError = i18n.msg.app.temperatureOffsetApiNotReady;
       return;
     }
     controlActionBusy = true;
     try {
       await api.setTemperatureOffset(value);
       await refreshControlStatus();
-      setStatus("온도 보정값을 변경했습니다.", "ok");
+      setStatus(i18n.msg.app.temperatureOffsetChanged, "ok");
     } catch (error) {
       controlStatusError = errorMessage(error);
-      setStatus(`온도 보정값 변경 실패: ${controlStatusError}`, "error");
+      setStatus(i18n.msg.app.temperatureOffsetFailed(controlStatusError), "error");
     } finally {
       controlActionBusy = false;
     }
@@ -436,17 +537,17 @@
 
   async function setHumidityOffset(value: number): Promise<void> {
     if (!api.setHumidityOffset) {
-      controlStatusError = "습도 보정 API가 준비되지 않았습니다.";
+      controlStatusError = i18n.msg.app.humidityOffsetApiNotReady;
       return;
     }
     controlActionBusy = true;
     try {
       await api.setHumidityOffset(value);
       await refreshControlStatus();
-      setStatus("습도 보정값을 변경했습니다.", "ok");
+      setStatus(i18n.msg.app.humidityOffsetChanged, "ok");
     } catch (error) {
       controlStatusError = errorMessage(error);
-      setStatus(`습도 보정값 변경 실패: ${controlStatusError}`, "error");
+      setStatus(i18n.msg.app.humidityOffsetFailed(controlStatusError), "error");
     } finally {
       controlActionBusy = false;
     }
@@ -468,7 +569,7 @@
   }
 
   function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+    return apiErrorMessage(i18n.msg, error);
   }
 
   function calibrationLabel(zone: WebZone): string {
@@ -490,7 +591,17 @@
     if (!config) return;
     if (history) configHistory.pushHistory();
     config = normalizeSoftwareConfig(mutator(config));
-    if (save) configSave.scheduleSave();
+    if (save) configSave.markPending();
+  }
+
+  function updateZoneDraftConfig(
+    mutator: (current: WebDeviceConfig) => WebDeviceConfig,
+    save: boolean | undefined = undefined,
+    history: boolean | undefined = undefined
+  ): void {
+    const shouldRecordHistory = history ?? (save ?? true);
+    updateConfig(mutator, false, shouldRecordHistory);
+    configSave.markPending();
   }
 
   async function applyImportedConfig(nextConfig: WebDeviceConfig): Promise<void> {
@@ -509,6 +620,11 @@
   function addZone(): void {
     activeZoneTool = "zones";
     zoneEditor.addZone();
+  }
+
+  function addExitZone(): void {
+    activeZoneTool = "zones";
+    zoneEditor.addZone("exit");
   }
 
   function deleteSelected(): void {
@@ -552,29 +668,7 @@
   }
 
   function isSelectionPreservingTarget(target: Element): boolean {
-    return Boolean(
-      target.closest(
-        [
-          "button",
-          "input",
-          "textarea",
-          "select",
-          "option",
-          "a",
-          "[data-zone-id]",
-          "[data-calibration-select]",
-          "[data-zone-drag]",
-          "[data-zone-edge]",
-          "[data-zone-point]",
-          "[data-zone-select]",
-          "[data-calibration-info]",
-          "[data-calibration-dialog]",
-          "[data-protected-zone-dialog]",
-          "[data-shrink-confirm-dialog]",
-          ".target"
-        ].join(", ")
-      )
-    );
+    return Boolean(target.closest(APP_SELECTION_PRESERVE_SELECTOR));
   }
 
   async function loadFloorplanBackup(): Promise<BackupFloorplanData | null> {
@@ -603,28 +697,37 @@
 
   async function applyFloorplanBackup(floorplan: BackupFloorplanData): Promise<void> {
     if (floorplan.image) {
-      await saveFloorplanStorage(
-        {
-          document: floorplan.document,
-          image: base64ToBlob(floorplan.image.dataBase64, floorplan.image.mime)
-        },
-        { baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher }
+      await deviceStorageQueue.run("floorplan", () =>
+        saveFloorplanStorage(
+          {
+            document: floorplan.document,
+            image: base64ToBlob(floorplan.image.dataBase64, floorplan.image.mime)
+          },
+          { baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher }
+        )
       );
-      await markFloorplanRestored(true);
+      await markFloorplanRestored(true, floorplan.document);
       return;
     }
-    await saveFloorplanStorageDocument(floorplan.document, { baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher });
-    await markFloorplanRestored(config?.floorplan?.hasImage === true);
+    await deviceStorageQueue.run("floorplan", () =>
+      saveFloorplanStorageDocument(floorplan.document, { baseUrl: deviceBaseUrl, fetcher: floorplanStorageFetcher })
+    );
+    await markFloorplanRestored(config?.floorplan?.hasImage === true, floorplan.document);
   }
 
-  async function markFloorplanRestored(hasImage: boolean): Promise<void> {
+  async function markFloorplanRestored(
+    hasImage: boolean,
+    document: FloorplanStorageDocument | undefined = undefined
+  ): Promise<void> {
     if (!config) return;
+    const room = document ? buildFloorplanRoomContext(document) : undefined;
     config = normalizeSoftwareConfig({
       ...config,
       floorplan: {
         ...(config.floorplan ?? {}),
         enabled: true,
-        hasImage
+        hasImage,
+        room
       }
     });
     await configSave.saveConfigNow();
@@ -633,20 +736,25 @@
   async function saveFloorplanFromPanel(
     ...[document, image]: Parameters<NonNullable<DeviceApi["saveFloorplan"]>>
   ): Promise<void> {
-    if (!api.saveFloorplan) throw new Error("평면도 저장 API가 준비되지 않았습니다.");
+    if (!api.saveFloorplan) throw new Error(i18n.msg.app.floorplanSaveApiNotReady);
     await configSave.saveConfigNow();
     await api.saveFloorplan(document, image);
-    await markFloorplanAvailable(true);
+    await markFloorplanAvailable(true, document);
   }
 
-  async function markFloorplanAvailable(hasImage: boolean): Promise<void> {
+  async function markFloorplanAvailable(
+    hasImage: boolean,
+    document: FloorplanStorageDocument | undefined = undefined
+  ): Promise<void> {
     if (!config) return;
+    const room = hasImage && document ? buildFloorplanRoomContext(document) : undefined;
     config = normalizeSoftwareConfig({
       ...config,
       floorplan: {
         ...(config.floorplan ?? {}),
         enabled: hasImage,
-        hasImage
+        hasImage,
+        room
       }
     });
     await configSave.saveConfigNow();
@@ -686,31 +794,20 @@
     return new Blob([bytes], { type: mime });
   }
 
-  function resetDemoStorage(): void {
-    resetMockFloorplanStorage();
-    localStorage.removeItem(DEMO_SETUP_COMPLETE_KEY);
-    window.location.reload();
-  }
-
-  function completeSetupMock(): void {
-    localStorage.setItem(DEMO_SETUP_COMPLETE_KEY, "1");
-    setupMockCompleted = true;
-  }
-
   function integrationMode(): IntegrationMode {
     const mode = config?.integrationMode;
     return mode === "edge" || mode === "ha" ? mode : "unknown";
   }
 
   function updateHaSetupGateFromStatus(status: WebSystemStatus): void {
-    if (useMockApi || requiresHaSetupHandoff || haSetupGateDismissed || haSetupGateVisible || haSetupGateBusy) return;
+    if (mockMode || requiresHaSetupHandoff() || haSetupGateDismissed || haSetupGateVisible || haSetupGateBusy) return;
     if (!status.api?.warning || status.api?.connected) return;
     if (!config) return;
     const mode = integrationMode();
     if (mode === "edge") return;
     if (mode === "unknown") {
       haSetupGateMode = "select";
-      haSetupGateMessage = "사용할 연동 방식을 선택하세요.";
+      haSetupGateMessage = i18n.msg.app.setupModeSelectMessage;
       haSetupGateAllowContinue = false;
       haSetupGateVisible = true;
       return;
@@ -719,8 +816,8 @@
     haSetupGateMode = uptimeSeconds < 300 ? "api-warmup" : "api-warning";
     haSetupGateMessage =
       haSetupGateMode === "api-warmup"
-        ? "Home Assistant API 연결을 확인하는 중입니다. 이 과정은 약 1분 정도 걸릴 수 있습니다."
-        : "Home Assistant 연결이 아직 확인되지 않습니다. 이미 기기를 추가했다면 네트워크와 Native API 설정을 확인하세요.";
+        ? i18n.msg.app.haApiWarmupMessage
+        : i18n.msg.app.haApiWarningMessage;
     haSetupGateAllowContinue = false;
     haSetupGateVisible = true;
   }
@@ -733,33 +830,33 @@
   }
 
   function haSetupGateTitle(): string {
-    if (haSetupGateMode === "select") return "사용 환경을 선택하세요";
-    if (haSetupGateMode === "edge") return "초기 설정을 마무리하는 중";
-    if (haSetupGateMode === "ha-setup") return "Home Assistant 연동 준비";
-    if (haSetupGateMode === "api-warmup") return "Home Assistant 연결 대기 중";
-    return "Home Assistant 연결을 확인하세요";
+    if (haSetupGateMode === "select") return i18n.msg.app.setupTitles.select;
+    if (haSetupGateMode === "edge") return i18n.msg.app.setupTitles.edge;
+    if (haSetupGateMode === "ha-setup") return i18n.msg.app.setupTitles.haSetup;
+    if (haSetupGateMode === "api-warmup") return i18n.msg.app.setupTitles.apiWarmup;
+    return i18n.msg.app.setupTitles.apiWarning;
   }
 
   function haSetupGateBody(): string {
     if (haSetupGateMode === "select") {
-      return "SmartThings Edge만 사용할지, Home Assistant도 함께 사용할지 선택하세요. 나중에 Home Assistant를 사용하게 되면 다시 연동할 수 있습니다.";
+      return i18n.msg.app.setupBodies.select;
     }
     if (haSetupGateMode === "edge") {
-      return "초기 설정을 마무리하는 중입니다. Wi-Fi 연결이 잠시 불안정할 수 있습니다.";
+      return i18n.msg.app.setupBodies.edge;
     }
     if (haSetupGateMode === "ha-setup") {
-      return "확인을 누르면 Home Assistant 연동 준비를 마무리합니다. 연결 확인에는 약 1분 정도 걸릴 수 있습니다.";
+      return i18n.msg.app.setupBodies.haSetup;
     }
     if (haSetupGateMode === "api-warmup") {
-      return "Home Assistant 연동 준비가 아직 마무리되지 않았습니다. 확인을 누르면 API 연결 준비를 진행합니다.";
+      return i18n.msg.app.setupBodies.apiWarmup;
     }
-    return "Home Assistant 연결이 아직 확인되지 않습니다. 확인을 눌러 API 연결 준비를 다시 진행한 뒤, Home Assistant에서 기기 추가 상태와 API 암호화 키를 확인하세요.";
+    return i18n.msg.app.setupBodies.apiWarning;
   }
 
   function haSetupGateButtonText(): string {
-    if (haSetupGateAllowContinue) return "대시보드 계속 사용";
-    if (haSetupGateMode === "edge") return haSetupGateBusy ? "마무리 중..." : "대시보드 계속 사용";
-    return haSetupGateBusy ? "연동 준비 중..." : "확인하고 계속";
+    if (haSetupGateAllowContinue) return i18n.msg.app.setupContinueDashboard;
+    if (haSetupGateMode === "edge") return haSetupGateBusy ? i18n.msg.app.setupFinishingBusy : i18n.msg.app.setupContinueDashboard;
+    return haSetupGateBusy ? i18n.msg.app.setupPreparingBusy : i18n.msg.app.setupConfirmContinue;
   }
 
   function cleanSetupUrl(): void {
@@ -793,14 +890,14 @@
     haSetupGateMode = mode === "edge" ? "edge" : "ha-setup";
     haSetupGateMessage =
       mode === "edge"
-        ? "초기 설정을 마무리하고 있습니다. Wi-Fi 연결이 잠시 불안정할 수 있습니다."
-        : "Home Assistant 연동 준비를 시작합니다. 연결 확인에는 약 1분 정도 걸릴 수 있습니다.";
+        ? i18n.msg.app.setupFinishingEdge
+        : i18n.msg.app.haApiCheckingLong;
 
     try {
       await saveIntegrationMode(mode);
       await runHaSetupHandoff(mode);
     } catch (error) {
-      haSetupGateMessage = `초기 설정을 마무리하지 못했습니다. ${errorMessage(error)}`;
+      haSetupGateMessage = i18n.msg.app.setupFinishFailed(errorMessage(error));
       haSetupGateBusy = false;
       haSetupGateAllowContinue = true;
     }
@@ -811,7 +908,7 @@
     const currentMode = integrationMode();
     if (currentMode === "unknown") {
       haSetupGateMode = "select";
-      haSetupGateMessage = "사용할 연동 방식을 선택하세요.";
+      haSetupGateMessage = i18n.msg.app.setupModeSelectMessage;
       haSetupGateAllowContinue = false;
       haSetupGateDismissed = false;
       haSetupGateVisible = true;
@@ -824,22 +921,22 @@
       await saveIntegrationMode(nextMode);
       if (nextMode === "edge") {
         dismissHaSetupGate();
-        setStatus("SmartThings Edge 중심으로 사용하도록 설정했습니다.", "ok");
+        setStatus(i18n.msg.app.edgeModeSet, "ok");
         return;
       }
 
       if (systemStatus?.api?.connected && systemStatus.api.warning === false) {
-        setStatus("Home Assistant도 함께 사용하도록 설정했습니다.", "ok");
+        setStatus(i18n.msg.app.haModeSet, "ok");
         return;
       }
 
       haSetupGateMode = "ha-setup";
-      haSetupGateMessage = "Home Assistant 연동 준비가 필요합니다.";
+      haSetupGateMessage = i18n.msg.app.haSetupNeeded;
       haSetupGateAllowContinue = false;
       haSetupGateDismissed = false;
       haSetupGateVisible = true;
     } catch (error) {
-      setStatus(`사용 환경을 변경하지 못했습니다. ${errorMessage(error)}`, "error");
+      setStatus(i18n.msg.app.integrationModeChangeFailed(errorMessage(error)), "error");
     } finally {
       integrationModeActionBusy = false;
     }
@@ -854,7 +951,7 @@
     await api.completeHaSetupHandoff();
 
     if (mode === "edge") {
-      haSetupGateMessage = "초기 설정 요청을 보냈습니다. 대시보드는 계속 사용할 수 있습니다.";
+      haSetupGateMessage = i18n.msg.app.setupRequestSent;
       haSetupGateBusy = false;
       haSetupGateAllowContinue = true;
       cleanSetupUrl();
@@ -862,12 +959,12 @@
       return;
     }
 
-    haSetupGateMessage = "Home Assistant API 연결 상태를 확인하는 중입니다. 약 1분 정도 걸릴 수 있습니다.";
+    haSetupGateMessage = i18n.msg.app.haApiCheckingLong;
     const readyState = await waitForHaApiReady(60000);
 
     if (readyState !== "ready") {
       haSetupGateMessage =
-        "기기 설정은 완료되었습니다. Home Assistant 연결 확인에는 최대 1분 정도 걸릴 수 있습니다. 잠시 후 Home Assistant에서 기기 상태를 확인해 주세요.";
+        i18n.msg.app.haSetupReadyNotice;
       haSetupGateBusy = false;
       haSetupGateAllowContinue = true;
       return;
@@ -896,32 +993,31 @@
     haSetupGateAllowContinue = false;
     haSetupGateMessage =
       mode === "edge"
-        ? "초기 설정을 마무리하고 있습니다. Wi-Fi 연결이 잠시 불안정할 수 있습니다."
-        : "Home Assistant 연동을 위해 네트워크 설정을 마무리하는 중입니다.";
+        ? i18n.msg.app.setupFinishingEdge
+        : i18n.msg.app.setupFinishingHa;
     try {
       await saveIntegrationMode(mode);
       await runHaSetupHandoff(mode);
     } catch (error) {
-      haSetupGateMessage = `연동 준비를 완료하지 못했습니다. ${errorMessage(error)}`;
+      haSetupGateMessage = i18n.msg.app.haSetupCompleteFailed(errorMessage(error));
       haSetupGateBusy = false;
       haSetupGateAllowContinue = true;
     }
   }
 </script>
 
-{#if useSetupMock && !setupMockCompleted}
-  <SetupMockPanel onComplete={completeSetupMock} />
-{:else}
 <main class="app-shell">
   <header class="top-bar">
     <div>
       <h1>Radar Zone Configurator</h1>
-      <p>{useDemoMode ? "데모 모드입니다. 실제 기기에 저장되지 않습니다." : useMockApi ? "Mock 데이터로 확인 중입니다." : "실시간 위치와 구역 설정을 한 화면에서 확인합니다."}</p>
+      <p>{demoMode ? i18n.msg.dashboard.demoMode : mockMode ? i18n.msg.dashboard.mockMode : i18n.msg.dashboard.liveMode}</p>
     </div>
     <div class="top-status-group">
-      {#if useDemoMode}
-        <div class="demo-pill">데모</div>
-        <button class="demo-reset-button" type="button" onclick={resetDemoStorage}>초기화</button>
+      {#if demoMode}
+        <div class="demo-pill">{i18n.msg.app.demo}</div>
+        {#if onResetDemoStorage}
+          <button class="demo-reset-button" type="button" onclick={onResetDemoStorage}>{i18n.msg.common.reset}</button>
+        {/if}
       {/if}
       <div class="status-pill" data-status data-tone={statusTone}>{statusText}</div>
     </div>
@@ -932,24 +1028,24 @@
     <div class="ha-setup-gate-backdrop" role="dialog" aria-modal="true" aria-labelledby="ha-setup-gate-title">
       <section class="ha-setup-gate-dialog">
         <div>
-          <span>Home Assistant 연동</span>
+          <span>{i18n.msg.app.haIntegrationTitle}</span>
           <strong id="ha-setup-gate-title">{haSetupGateTitle()}</strong>
         </div>
         <p>{haSetupGateBody()}</p>
         <p>{haSetupGateMessage}</p>
         {#if haSetupGateMode === "api-warning"}
           <p class="ha-setup-gate-help">
-            <a href="https://esphome.io/components/api/" target="_blank" rel="noreferrer">ESPHome Native API 문서</a>
-            를 참고해 Home Assistant 연결 상태를 확인하세요.
+            <a href="https://esphome.io/components/api/" target="_blank" rel="noreferrer">{i18n.msg.app.haDocsLabel}</a>
+            {i18n.msg.app.haDocsSuffix}
           </p>
         {/if}
         {#if haSetupGateMode === "select"}
           <div class="ha-setup-gate-actions">
             <button type="button" disabled={haSetupGateBusy} onclick={() => chooseIntegrationMode("edge")}>
-              SmartThings Edge만 사용
+              {i18n.msg.app.edgeOnly}
             </button>
             <button type="button" disabled={haSetupGateBusy} onclick={() => chooseIntegrationMode("ha")}>
-              Home Assistant도 사용
+              {i18n.msg.app.haAlso}
             </button>
           </div>
         {:else}
@@ -962,223 +1058,181 @@
   {/if}
 
   <nav class="app-tabs" aria-label="Radar configurator sections">
-    <button class:active={activeTab === "dashboard"} type="button" onclick={() => (activeTab = "dashboard")}>대시보드</button>
-    <button class:active={activeTab === "zones"} type="button" onclick={() => (activeTab = "zones")}>구역 설정</button>
-    <button class:active={activeTab === "floorplan"} type="button" onclick={() => (activeTab = "floorplan")}>평면도</button>
-    <button class:active={activeTab === "stats"} type="button" onclick={() => (activeTab = "stats")}>감지 통계</button>
-    <button class:active={activeTab === "backup"} type="button" onclick={() => (activeTab = "backup")}>관리 / 백업</button>
+    <div class="app-tab-list">
+      <button class:active={activeTab === "dashboard"} type="button" onclick={() => setActiveTab("dashboard")}>{i18n.msg.tabs.dashboard}</button>
+      <button class:active={activeTab === "zones"} type="button" onclick={() => setActiveTab("zones")}>{i18n.msg.tabs.zones}</button>
+      <button class:active={activeTab === "floorplan"} type="button" onclick={() => setActiveTab("floorplan")}>{i18n.msg.tabs.floorplan}</button>
+      <button class:active={activeTab === "stats"} type="button" onclick={() => setActiveTab("stats")}>{i18n.msg.tabs.stats}</button>
+      <button class:active={activeTab === "backup"} type="button" onclick={() => setActiveTab("backup")}>{i18n.msg.tabs.backup}</button>
+    </div>
+    <div class="language-menu">
+      <button
+        class="language-menu-button"
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={languageMenuOpen}
+        onclick={() => (languageMenuOpen = !languageMenuOpen)}
+      >
+        {i18n.msg.language.name}
+      </button>
+      {#if languageMenuOpen}
+        <div class="language-menu-list" role="menu">
+          {#each languageOptions as option}
+            <button
+              class:active={i18n.language === option.code}
+              type="button"
+              role="menuitem"
+              onclick={() => {
+                i18n.setLanguage(option.code);
+                languageMenuOpen = false;
+              }}
+            >
+              {option.name}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   </nav>
 
   {#if activeTab === "dashboard"}
-    <section class="tab-page">
-      <DashboardPanel
-        {config}
-        {state}
-        {systemStatus}
-        {systemStatusLoading}
-        {systemStatusError}
-        {controlStatus}
-        {controlStatusLoading}
-        {controlStatusError}
-        {controlActionBusy}
-        integrationMode={integrationMode()}
-        {integrationModeActionBusy}
-        {updatedText}
-        floorplanStorageBaseUrl={deviceBaseUrl}
-        {floorplanStorageFetcher}
-        onNavigate={(tab) => (activeTab = tab)}
-        onSetStatusLed={setStatusLed}
-        onSetLedBlinkDuration={setLedBlinkDuration}
-        onSetEnvironmentCorrection={setEnvironmentCorrection}
-        onSetTemperatureOffset={setTemperatureOffset}
-        onSetHumidityOffset={setHumidityOffset}
-        onChangeIntegrationMode={changeIntegrationModeFromDashboard}
-      />
-    </section>
+    <DashboardPage
+      {config}
+      {state}
+      {systemStatus}
+      {systemStatusLoading}
+      {systemStatusError}
+      {controlStatus}
+      {controlStatusLoading}
+      {controlStatusError}
+      {controlActionBusy}
+      integrationMode={integrationMode()}
+      {integrationModeActionBusy}
+      messages={i18n.msg}
+      {updatedText}
+      floorplanStorageBaseUrl={deviceBaseUrl}
+      {floorplanStorageFetcher}
+      onNavigate={setActiveTab}
+      onSetStatusLed={setStatusLed}
+      onSetLedBlinkDuration={setLedBlinkDuration}
+      onSetEnvironmentCorrection={setEnvironmentCorrection}
+      onSetLegacyPresenceFallback={setLegacyPresenceFallback}
+      onSetTemperatureOffset={setTemperatureOffset}
+      onSetHumidityOffset={setHumidityOffset}
+      onChangeIntegrationMode={changeIntegrationModeFromDashboard}
+    />
   {:else if activeTab === "zones"}
-  <section class={`workspace zone-workspace ${activeZoneTool ? "edit-step" : ""}`}>
-    <aside class="side-panel zone-workflow-panel">
-      <div class="floorplan-workflow-card zone-summary-card">
-        <div>
-          <strong>구역 설정</strong>
-          <span>레이더맵 위에서 감지 구역과 오탐 보정 구역을 편집합니다.</span>
-        </div>
-        <dl class="zone-summary-list">
-          <div>
-            <dt>상태</dt>
-            <dd>{config ? "데이터 확인됨" : "로딩 중"}</dd>
-          </div>
-          <div>
-            <dt>구역</dt>
-            <dd>{zones.length}개</dd>
-          </div>
-          <div>
-            <dt>오탐 보정</dt>
-            <dd>{calibrationZones.length}개</dd>
-          </div>
-          <div>
-            <dt>감지</dt>
-            <dd>{activeTargetCount}개</dd>
-          </div>
-        </dl>
-      </div>
-
-      <div class="floorplan-stored-tools zone-mode-tools">
-        <button
-          type="button"
-          data-active={activeZoneTool === "zones" ? "true" : "false"}
-          onclick={() => (activeZoneTool = activeZoneTool === "zones" ? "" : "zones")}
-        >
-          구역 설정
-        </button>
-        <button
-          type="button"
-          data-active={activeZoneTool === "calibration" ? "true" : "false"}
-          onclick={() => (activeZoneTool = activeZoneTool === "calibration" ? "" : "calibration")}
-        >
-          오탐 보정
-        </button>
-      </div>
-    </aside>
-
-    {#if activeZoneTool}
-      <aside class="side-panel zone-detail-panel">
-        {#if activeZoneTool === "zones"}
-          <ZonePanel
-            loaded={Boolean(config)}
-            {zones}
-            {selectedZone}
-            {selectedZoneId}
-            {zoneTypeLabels}
-            onSelectZone={selectZone}
-            onAddZone={addZone}
-            onSetZoneName={setSelectedZoneName}
-            onSetZoneType={setSelectedZoneType}
-            onDeleteSelected={deleteSelected}
-          />
-        {:else}
-          <CalibrationPanel
-            loaded={Boolean(config)}
-            hasState={Boolean(state)}
-            pirMotion={Boolean(state?.pirMotion)}
-            running={Boolean(calibration.run)}
-            zones={calibrationZones}
-            {selectedZoneId}
-            statusText={calibration.statusText()}
-            {calibrationTypeLabels}
-            onStart={calibration.start}
-            onStop={() => calibration.stop("사용자가 보정을 중지했습니다.", "warn")}
-            onSelectZone={selectZone}
-            onSetZoneType={setCalibrationZoneType}
-            onDeleteZone={(zoneId) => {
-              selectZone(zoneId);
-              deleteSelected();
-            }}
-          />
-        {/if}
-      </aside>
-    {/if}
-
-    <section class="map-panel zone-map-panel">
-      <div class="radar-host" data-radar-scene>
-        <div class="radar-scene-frame">
-          <MapToolbar
-            canUndo={configHistory.canUndo}
-            canRedo={configHistory.canRedo}
-            {selectedZone}
-            hasSelectedCalibrationZone={Boolean(selectedCalibrationZone)}
-            {selectedLabel}
-            saveState={configSave.saveState}
-            saveStatusText={configSave.saveStatusText}
-            {updatedText}
-            {debugMode}
-            onUndo={configHistory.undo}
-            onRedo={configHistory.redo}
-            onConvertToRect={radarInteraction.convertSelectedZoneToRect}
-            onDeleteSelected={deleteSelected}
-            onToggleDebug={() => (debugMode = !debugMode)}
-          />
-          <RadarScene
-            {state}
-            config={config ? displayConfig() : null}
-            {selectedZoneId}
-            editable
-            {selectedPointIndex}
-            {debugMode}
-            onCanvasClick={radarInteraction.handleRadarClick}
-            onZonePointerDown={radarInteraction.handleRadarPointerDown}
-            onZoneEdgeClick={radarInteraction.handleRadarEdgeClick}
-            onZonePointDoubleClick={radarInteraction.handlePointDoubleClick}
-            onCalibrationInfoClick={(zoneId) => {
-              selectZone(zoneId);
-              radarInteraction.protectedZoneDialogOpen = true;
-            }}
-          />
-          <p class="map-status-line">타깃 {activeTargetCount}개 감지 중</p>
-        </div>
-      </div>
-      {#if debugMode}
-        <DebugPanel targets={state?.targets ?? []} />
-      {/if}
-    </section>
-  </section>
+    <ZonesPage
+      messages={i18n.msg}
+      {activeZoneTool}
+      {activeTargetCount}
+      calibrationRun={Boolean(calibration.run)}
+      calibrationStatusText={calibration.statusText()}
+      {calibrationTypeLabels}
+      {calibrationZones}
+      canRedo={configHistory.canRedo}
+      canUndo={configHistory.canUndo}
+      {config}
+      {debugMode}
+      displayConfig={config ? displayConfig() : null}
+      hasState={Boolean(state)}
+      pirMotion={Boolean(state?.pirMotion)}
+      saveState={configSave.saveState}
+      saveStatusText={configSave.saveStatusText}
+      {selectedCalibrationZone}
+      {selectedLabel}
+      {selectedPointIndex}
+      {selectedZone}
+      {selectedZoneId}
+      {state}
+      {updatedText}
+      {zoneTypeLabels}
+      {zones}
+      onAddZone={addZone}
+      onAddExitZone={addExitZone}
+      onCalibrationInfoClick={(zoneId) => {
+        selectZone(zoneId);
+        radarInteraction.protectedZoneDialogOpen = true;
+      }}
+      onConvertToRect={radarInteraction.convertSelectedZoneToRect}
+      onDeleteCalibrationZone={(zoneId) => {
+        selectZone(zoneId);
+        deleteSelected();
+      }}
+      onDeleteSelected={deleteSelected}
+      onRedo={configHistory.redo}
+      onSaveConfig={configSave.saveConfigNow}
+      onSelectZone={selectZone}
+      onSetActiveZoneTool={(tool) => (activeZoneTool = tool)}
+      onSetCalibrationZoneType={setCalibrationZoneType}
+      onSetDebugMode={(enabled) => (debugMode = enabled)}
+      onSetZoneName={setSelectedZoneName}
+      onSetZoneType={setSelectedZoneType}
+      onStartCalibration={calibration.start}
+      onStopCalibration={() => calibration.stop(i18n.msg.zones.calibrationStoppedByUser, "warn")}
+      onUndo={configHistory.undo}
+      onZoneEdgeClick={radarInteraction.handleRadarEdgeClick}
+      onZonePointDoubleClick={radarInteraction.handlePointDoubleClick}
+      onZonePointerDown={radarInteraction.handleRadarPointerDown}
+      onCanvasClick={radarInteraction.handleRadarClick}
+    />
   {:else if activeTab === "floorplan"}
-    <section class="tab-page">
-      <FloorplanPanel
-        deviceConfig={displayConfig()}
-        deviceState={state}
-        floorplanStorageBaseUrl={deviceBaseUrl}
-        {floorplanStorageFetcher}
-        onUpdateDeviceConfig={(mutator) => updateConfig(mutator)}
-        onSaveFloorplan={saveFloorplanFromPanel}
-        onFloorplanDeleted={() => void markFloorplanAvailable(false)}
-      />
-    </section>
+    <FloorplanPage
+      messages={i18n.msg}
+      deviceConfig={displayConfig()}
+      deviceState={state}
+      floorplanStorageBaseUrl={deviceBaseUrl}
+      {floorplanStorageFetcher}
+      onUpdateDeviceConfig={(mutator) => updateConfig(mutator)}
+      onSelectDeviceZone={(zoneId) => selectZone(zoneId)}
+      onSaveDeviceConfig={configSave.saveConfigNow}
+      onSaveFloorplan={saveFloorplanFromPanel}
+      onFloorplanDeleted={() => void markFloorplanAvailable(false)}
+      onUnsavedChange={setFloorplanUnsavedChanges}
+    />
   {:else if activeTab === "stats"}
-    <section class="tab-page">
-      <StatsPanel {stats} error={statsError} loading={statsLoading} onRefresh={refreshStats} />
-    </section>
+    <StatsPage messages={i18n.msg} {stats} error={statsError} loading={statsLoading} onRefresh={refreshStats} />
   {:else}
-    <section class="tab-page">
-      <BackupPanel
-        loaded={Boolean(config)}
-        stage={backupRestore.stage}
-        filename={backupRestore.filename}
-        message={backupRestore.message}
-        errors={backupRestore.errors}
-        warnings={backupRestore.warnings}
-        summary={backupRestore.summary}
-        progressSteps={backupRestore.progressSteps}
-        progressPercent={backupRestore.progressPercent}
-        importZones={backupRestore.importZones}
-        importFloorplan={backupRestore.importFloorplan}
-        importStats={backupRestore.importStats}
-        canImportFloorplan={backupRestore.canImportFloorplan}
-        canImportStats={backupRestore.canImportStats}
-        canConfirmImport={backupRestore.canConfirmImport}
-        {systemStatus}
-        systemStatusLoading={systemStatusLoading}
-        systemStatusError={systemStatusError}
-        demoMode={useDemoMode}
-        issueText={backupRestore.issueText}
-        onExport={backupRestore.exportBackup}
-        onImportFile={backupRestore.readImportFile}
-        onSetImportZones={backupRestore.setImportZones}
-        onSetImportFloorplan={backupRestore.setImportFloorplan}
-        onSetImportStats={backupRestore.setImportStats}
-        onConfirmImport={backupRestore.confirmImport}
-        onCancelImport={backupRestore.cancelImport}
-        onGetSystemStatus={useDemoMode ? undefined : api.getSystemStatus}
-        onUploadFirmware={useDemoMode ? undefined : api.uploadFirmware}
-        onGetApiKey={useDemoMode ? undefined : api.getApiKey}
-        onResetSystem={useDemoMode ? undefined : api.resetSystem}
-        onRebootSystem={useDemoMode ? undefined : api.rebootSystem}
-      />
-    </section>
+    <BackupPage
+      messages={i18n.msg}
+      loaded={Boolean(config)}
+      stage={backupRestore.stage}
+      filename={backupRestore.filename}
+      message={backupRestore.message}
+      errors={backupRestore.errors}
+      warnings={backupRestore.warnings}
+      summary={backupRestore.summary}
+      progressSteps={backupRestore.progressSteps}
+      progressPercent={backupRestore.progressPercent}
+      importZones={backupRestore.importZones}
+      importFloorplan={backupRestore.importFloorplan}
+      importStats={backupRestore.importStats}
+      canImportFloorplan={backupRestore.canImportFloorplan}
+      canImportStats={backupRestore.canImportStats}
+      canConfirmImport={backupRestore.canConfirmImport}
+      {systemStatus}
+      {systemStatusLoading}
+      {systemStatusError}
+      {demoMode}
+      issueText={backupRestore.issueText}
+      onExport={backupRestore.exportBackup}
+      onImportFile={backupRestore.readImportFile}
+      onSetImportZones={backupRestore.setImportZones}
+      onSetImportFloorplan={backupRestore.setImportFloorplan}
+      onSetImportStats={backupRestore.setImportStats}
+      onConfirmImport={backupRestore.confirmImport}
+      onCancelImport={backupRestore.cancelImport}
+      onGetSystemStatus={demoMode ? undefined : api.getSystemStatus}
+      onUploadFirmware={demoMode ? undefined : api.uploadFirmware}
+      onGetApiKey={demoMode ? undefined : api.getApiKey}
+      onResetSystem={demoMode ? undefined : api.resetSystem}
+      onRebootSystem={demoMode ? undefined : api.rebootSystem}
+    />
   {/if}
 </main>
 
 <CalibrationDialog
+  messages={i18n.msg}
   open={calibration.dialogOpen}
   running={Boolean(calibration.run)}
   result={calibration.result}
@@ -1189,17 +1243,18 @@
   logs={calibration.dialogLogs}
   metricsLines={calibration.result?.metrics ? calibration.metricsLines(calibration.result.metrics) : []}
   onClose={() => (calibration.dialogOpen = false)}
-  onStop={() => calibration.stop("사용자가 보정을 중지했습니다.", "warn")}
+  onStop={() => calibration.stop(i18n.msg.zones.calibrationStoppedByUser, "warn")}
 />
 
 <ProtectedZoneDialog
+  messages={i18n.msg}
   open={radarInteraction.protectedZoneDialogOpen}
   onClose={() => (radarInteraction.protectedZoneDialogOpen = false)}
 />
 
 <ShrinkConfirmDialog
+  messages={i18n.msg}
   zoneId={radarInteraction.shrinkConfirmZoneId}
   onCancel={radarInteraction.cancelCalibrationShrink}
   onConfirm={radarInteraction.unlockCalibrationMinSize}
 />
-{/if}

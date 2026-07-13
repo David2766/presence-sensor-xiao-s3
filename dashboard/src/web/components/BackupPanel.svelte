@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import type { BackupIssue, BackupValidationResult } from "../../core/config-backup";
+  import { apiErrorCode, apiErrorMessage } from "../api/api-message";
+  import type { Messages } from "../i18n/types";
   import type { BackupRestoreProgressStep, BackupRestoreStage } from "../state/useBackupRestore.svelte";
+  import { useDeviceStorageStatus } from "../state/useDeviceStorageStatus.svelte";
+  import { formatCompactBytes as formatBytes } from "../utils/formatters";
   import type {
     FirmwareUploadProgress,
     WebApiKeyResult,
@@ -12,6 +16,7 @@
   } from "../types";
 
   type Props = {
+    messages: Messages;
     loaded: boolean;
     stage: BackupRestoreStage;
     filename: string;
@@ -52,6 +57,7 @@
   } | null;
 
   let {
+    messages,
     loaded,
     stage,
     filename,
@@ -86,6 +92,8 @@
     onRebootSystem
   }: Props = $props();
 
+  const text = $derived(messages.backup);
+
   let fileInput: HTMLInputElement | null = $state(null);
   let firmwareFileInput: HTMLInputElement | null = $state(null);
   let firmwareFile: File | null = $state(null);
@@ -115,6 +123,7 @@
   let bootGuardNow = $state(Date.now());
   let bootGuardSnapshotMs = $state(Date.now());
   let bootGuardUptimeAtSnapshot = $state(0);
+  const configStorageStatus = useDeviceStorageStatus("config", () => messages.common.saveStatus);
   let componentDestroyed = false;
 
   function showDemoNotice(title: string, message: string): void {
@@ -144,14 +153,14 @@
   function scheduleApiKeyHide(seconds = 30): void {
     clearApiKeyTimer();
     apiKeyHideTimer = setTimeout(() => {
-      hideApiKey("API 키를 숨겼습니다.");
+      hideApiKey(text.apiKeyHidden);
     }, Math.max(1, seconds) * 1000);
   }
 
   async function handleApiKeyReveal(): Promise<void> {
     if (apiKeyLoading) return;
     if (demoMode || !onGetApiKey) {
-      showDemoNotice("데모에서는 API 키를 확인할 수 없습니다.", "API 키 확인은 실제 장치에서만 사용할 수 있습니다.");
+      showDemoNotice(text.apiKeyDemoTitle, text.apiKeyDemoMessage);
       return;
     }
 
@@ -161,11 +170,12 @@
       const result = await onGetApiKey();
       apiKeyValue = result.apiKey;
       apiKeyVisible = true;
-      apiKeyMessage = "30초 후 자동으로 숨겨집니다.";
+      apiKeyMessage = text.apiKeyAutoHide(result.visibleSeconds ?? 30);
       scheduleApiKeyHide(result.visibleSeconds ?? 30);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "API 키를 불러오지 못했습니다.";
-      hideApiKey(message.includes("api_key_not_set") ? "저장된 API 키가 없습니다. API 키 생성 또는 재발급이 필요합니다." : message);
+      const code = apiErrorCode(error);
+      const message = apiErrorMessage(messages, error, text.apiKeyLoadFailed);
+      hideApiKey(code === "api_key_not_set" ? text.apiKeyNotSet : message);
     } finally {
       apiKeyLoading = false;
     }
@@ -211,11 +221,12 @@
       }
     }
     if (!copied) copied = legacyCopyText(apiKeyValue);
-    hideApiKey(copied ? "API 키를 복사했습니다." : "복사하지 못했습니다. 다시 확인해 주세요.");
+    hideApiKey(copied ? text.apiKeyCopied : text.apiKeyCopyFailed);
   }
 
   onDestroy(() => {
     componentDestroyed = true;
+    configStorageStatus.destroy();
     clearApiKeyTimer();
   });
 
@@ -271,7 +282,7 @@
     while (Date.now() < deadline && !componentDestroyed) {
       attempts += 1;
       firmwareUploadMessage =
-        attempts <= 2 ? "장치가 재부팅 중입니다." : attempts <= 8 ? "장치 응답을 기다리는 중입니다." : "새 펌웨어 적용 여부를 확인하는 중입니다.";
+        attempts <= 2 ? text.firmwareRebooting : attempts <= 8 ? text.firmwareWaitingResponse : text.firmwareCheckingApplied;
 
       try {
         const after = snapshotFirmwareStatus(await onGetSystemStatus());
@@ -292,14 +303,14 @@
     firmwareUploadPercent = 100;
     firmwareUploadLoaded = firmwareFileSize || firmwareUploadLoaded;
     firmwareUploadTotal = firmwareFileSize || firmwareUploadTotal;
-    firmwareUploadMessage = "장치가 재부팅 중입니다.";
+    firmwareUploadMessage = text.firmwareRebooting;
 
     const result = await waitForFirmwareReboot(before);
     if (componentDestroyed) return;
 
     if (result === "timeout") {
       firmwareUploadStage = "verify-error";
-      firmwareUploadMessage = "장치 응답을 확인하지 못했습니다. 전원과 네트워크를 확인한 뒤 수동으로 새로고침하세요.";
+      firmwareUploadMessage = text.firmwareVerifyTimeout;
       return;
     }
 
@@ -307,10 +318,10 @@
     firmwareFile = null;
     firmwareUploadMessage =
       result === "changed"
-        ? "업데이트가 적용되었습니다. 대시보드를 새로고침합니다."
+        ? text.firmwareAppliedReload
         : result === "same"
-          ? "장치가 다시 응답했습니다. 같은 버전의 펌웨어를 다시 설치했을 수 있습니다. 대시보드를 새로고침합니다."
-          : "장치가 다시 응답했습니다. 대시보드를 새로고침합니다.";
+          ? text.firmwareSameVersionReload
+          : text.firmwareRespondedReload;
 
     await wait(1000);
     if (!componentDestroyed) window.location.reload();
@@ -318,7 +329,7 @@
 
   function openFilePicker(): void {
     if (demoMode) {
-      showDemoNotice("데모에서는 복원할 수 없습니다.", "데모 페이지는 실제 장치 데이터를 덮어쓰지 않도록 복원 기능을 막아두었습니다.");
+      showDemoNotice(text.restoreDemoTitle, text.restoreDemoOpenMessage);
       return;
     }
     fileInput?.click();
@@ -328,7 +339,7 @@
     const input = event.currentTarget as HTMLInputElement;
     if (demoMode) {
       input.value = "";
-      showDemoNotice("데모에서는 복원할 수 없습니다.", "백업 파일 검증과 복원 API 호출은 실제 장치에서만 사용할 수 있습니다.");
+      showDemoNotice(text.restoreDemoTitle, text.restoreDemoFileMessage);
       return;
     }
     onImportFile(input.files?.[0] || null);
@@ -338,11 +349,11 @@
   function openFirmwareFilePicker(): void {
     if (firmwareUploadStage === "uploading" || firmwareUploadStage === "verifying") return;
     if (bootGuardActive) {
-      showBootGuardNotice("펌웨어 업데이트");
+      showBootGuardNotice(text.firmwareUpdateTitle);
       return;
     }
     if (demoMode) {
-      showDemoNotice("데모에서는 업데이트할 수 없습니다.", "펌웨어 업로드는 장치를 재부팅할 수 있는 작업이라 데모에서는 API 호출을 모두 막아두었습니다.");
+      showDemoNotice(text.firmwareDemoTitle, text.firmwareDemoOpenMessage);
       return;
     }
     firmwareFileInput?.click();
@@ -351,7 +362,7 @@
   function handleFirmwareAction(): void {
     if (firmwareUploadStage === "uploading" || firmwareUploadStage === "verifying") return;
     if (bootGuardActive) {
-      showBootGuardNotice("펌웨어 업데이트");
+      showBootGuardNotice(text.firmwareUpdateTitle);
       return;
     }
     if (firmwareUploadStage === "selected" && firmwareFile) {
@@ -366,11 +377,11 @@
     const file = input.files?.[0] || null;
     input.value = "";
     if (bootGuardActive) {
-      showBootGuardNotice("펌웨어 업데이트");
+      showBootGuardNotice(text.firmwareUpdateTitle);
       return;
     }
     if (demoMode) {
-      showDemoNotice("데모에서는 업데이트할 수 없습니다.", "선택한 펌웨어 파일은 업로드되지 않습니다. 실제 장치에서만 업데이트를 진행할 수 있습니다.");
+      showDemoNotice(text.firmwareDemoTitle, text.firmwareDemoFileMessage);
       return;
     }
     if (!file) return;
@@ -384,25 +395,25 @@
 
     if (!file.name.toLowerCase().endsWith(".bin")) {
       firmwareUploadStage = "error";
-      firmwareUploadMessage = "ESPHome에서 생성한 .bin 펌웨어 파일만 업로드할 수 있습니다.";
+      firmwareUploadMessage = text.firmwareBinOnly;
       return;
     }
 
     if (Number.isFinite(systemStatus?.flash?.otaSlotBytes ?? NaN) && file.size > Number(systemStatus?.flash?.otaSlotBytes)) {
       firmwareUploadStage = "error";
-      firmwareUploadMessage = `파일이 OTA 예비 공간보다 큽니다. ${formatBytes(file.size)} / ${formatBytes(systemStatus?.flash?.otaSlotBytes)}`;
+      firmwareUploadMessage = text.firmwareFileTooLarge(formatBytes(file.size), formatBytes(systemStatus?.flash?.otaSlotBytes));
       return;
     }
 
     if (!onUploadFirmware) {
       firmwareUploadStage = "error";
-      firmwareUploadMessage = "펌웨어 업로드 API가 준비되지 않았습니다.";
+      firmwareUploadMessage = text.firmwareApiNotReady;
       return;
     }
 
     firmwareFile = file;
     firmwareUploadStage = "selected";
-    firmwareUploadMessage = "파일을 확인했습니다. 업로드 버튼을 누르면 업데이트를 시작합니다.";
+    firmwareUploadMessage = text.firmwareFileReady;
   }
 
   async function uploadSelectedFirmware(): Promise<void> {
@@ -410,7 +421,7 @@
     const file = firmwareFile;
     const beforeStatus = await readFirmwareStatusSnapshot();
     firmwareUploadStage = "uploading";
-    firmwareUploadMessage = "펌웨어를 업로드하는 중입니다. 업데이트 중에는 전원을 끄지 마세요.";
+    firmwareUploadMessage = text.firmwareUploadingMessage;
     try {
       await onUploadFirmware(file, (progress) => {
         firmwareUploadLoaded = progress.loaded;
@@ -426,12 +437,12 @@
         firmwareUploadPercent = 100;
         firmwareUploadLoaded = file.size;
         firmwareUploadTotal = file.size;
-        firmwareUploadMessage = "업로드 응답이 끊겼습니다. 장치 응답을 확인합니다.";
+        firmwareUploadMessage = text.firmwareUploadResponseLost;
         await verifyFirmwareRebootAndReload(beforeStatus);
         return;
       }
       firmwareUploadStage = "error";
-      firmwareUploadMessage = error instanceof Error ? error.message : "펌웨어 업데이트에 실패했습니다.";
+      firmwareUploadMessage = apiErrorMessage(messages, error, text.firmwareUpdateFailedMessage);
     }
   }
 
@@ -440,8 +451,9 @@
   }
 
   function handleConfirmImport(): void {
+    if (restoreStorageBusy) return;
     if (demoMode) {
-      showDemoNotice("데모에서는 복원할 수 없습니다.", "선택한 백업 데이터는 실제 장치에서만 가져올 수 있습니다.");
+      showDemoNotice(text.restoreDemoTitle, text.restoreDemoConfirmMessage);
       return;
     }
     onConfirmImport();
@@ -465,7 +477,7 @@
 
   function handleResetOptionsOpen(): void {
     if (bootGuardActive) {
-      showBootGuardNotice("초기화");
+      showBootGuardNotice(text.resetButton);
       return;
     }
     resetOptionsOpen = true;
@@ -473,7 +485,7 @@
 
   function handleRebootConfirmOpen(): void {
     if (bootGuardActive) {
-      showBootGuardNotice("재시작");
+      showBootGuardNotice(text.rebootButton);
       return;
     }
     rebootConfirmOpen = true;
@@ -483,12 +495,12 @@
     if (rebootExecuting) return;
     if (bootGuardActive) {
       rebootConfirmOpen = false;
-      showBootGuardNotice("재시작");
+      showBootGuardNotice(text.rebootButton);
       return;
     }
     if (demoMode || !onRebootSystem) {
       rebootConfirmOpen = false;
-      showDemoNotice("데모에서는 재시작할 수 없습니다.", "재시작 API는 실제 기기에서만 호출할 수 있습니다.");
+      showDemoNotice(text.rebootDemoTitle, text.rebootDemoMessage);
       return;
     }
 
@@ -497,10 +509,10 @@
       const result = await onRebootSystem();
       rebootConfirmOpen = false;
       const seconds = Math.max(1, Math.round((result.rebootInMs ?? 2500) / 1000));
-      showDemoNotice("재시작 요청 완료", `약 ${seconds}초 뒤 기기를 재시작합니다.`);
+      showDemoNotice(text.rebootRequestedTitle, text.rebootRequestedMessage(seconds));
     } catch (error) {
       rebootConfirmOpen = false;
-      showDemoNotice("재시작 실패", error instanceof Error ? error.message : "재시작 중 오류가 발생했습니다.");
+      showDemoNotice(text.rebootFailedTitle, apiErrorMessage(messages, error, text.rebootFailedMessage));
     } finally {
       rebootExecuting = false;
     }
@@ -520,11 +532,11 @@
 
   function handleResetConfirmRequest(): void {
     if (bootGuardActive) {
-      showBootGuardNotice("초기화");
+      showBootGuardNotice(text.resetButton);
       return;
     }
     if (!resetIncludeSettings && !resetIncludeWifi && !resetIncludeStats) {
-      showPreparedNotice("초기화 범위 선택 필요", "초기화할 항목을 하나 이상 선택해 주세요.");
+      showPreparedNotice(text.resetSelectionRequiredTitle, text.resetSelectionRequiredMessage);
       return;
     }
 
@@ -535,12 +547,12 @@
     if (resetExecuting) return;
     if (bootGuardActive) {
       resetConfirmOpen = false;
-      showBootGuardNotice("초기화");
+      showBootGuardNotice(text.resetButton);
       return;
     }
     if (demoMode || !onResetSystem) {
       resetConfirmOpen = false;
-      showDemoNotice("데모에서는 초기화할 수 없습니다.", "초기화 API는 실제 기기에서만 호출할 수 있습니다.");
+      showDemoNotice(text.resetDemoTitle, text.resetDemoMessage);
       return;
     }
 
@@ -554,18 +566,19 @@
       resetConfirmOpen = false;
       resetOptionsOpen = false;
       const rebootText = result.rebootRequired
-        ? ` 설정 마무리를 위해 약 ${Math.max(1, Math.round((result.rebootInMs ?? 2500) / 1000))}초 뒤 기기를 재부팅합니다.`
+        ? text.resetRebootSuffix(Math.max(1, Math.round((result.rebootInMs ?? 2500) / 1000)))
         : "";
-      showDemoNotice("초기화 요청 완료", `선택한 항목을 초기화했습니다.${rebootText}`);
+      showDemoNotice(text.resetRequestedTitle, text.resetRequestedMessage(rebootText));
     } catch (error) {
       resetConfirmOpen = false;
-      showDemoNotice("초기화 실패", error instanceof Error ? error.message : "초기화 중 오류가 발생했습니다.");
+      showDemoNotice(text.resetFailedTitle, apiErrorMessage(messages, error, text.resetFailedMessage));
     } finally {
       resetExecuting = false;
     }
   }
 
   const importing = $derived(stage === "importing");
+  const restoreStorageBusy = $derived(!importing && configStorageStatus.isBusy);
   const bootGuardSeconds = $derived(Math.max(1, Math.round(systemStatus?.boot?.guardSeconds ?? 60)));
   const bootGuardRemainingSeconds = $derived.by(() => {
     if (!systemStatus?.boot?.initialGuardActive) return 0;
@@ -575,7 +588,7 @@
   const bootGuardActive = $derived(bootGuardRemainingSeconds > 0);
   const bootGuardHint = $derived(
     bootGuardActive
-      ? `부팅 직후 안전 확인 중입니다. ${bootGuardRemainingSeconds}초 후 사용할 수 있습니다.`
+      ? text.bootGuardHint(bootGuardRemainingSeconds)
       : ""
   );
   const canConfirmReset = $derived(resetIncludeSettings || resetIncludeWifi || resetIncludeStats);
@@ -583,17 +596,9 @@
 
   function showBootGuardNotice(action: string): void {
     showPreparedNotice(
-      "부팅 안정화 중",
-      `${action}는 부팅 직후 ${bootGuardSeconds}초 동안 사용할 수 없습니다. OTA 롤백 감지와 장치 초기화를 안전하게 끝낸 뒤 다시 시도해 주세요.`
+      text.bootGuardTitle,
+      text.bootGuardNotice(action, bootGuardSeconds)
     );
-  }
-
-  function formatBytes(value: number | null | undefined): string {
-    if (!Number.isFinite(value ?? NaN)) return "-";
-    const bytes = Math.max(0, Number(value));
-    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-    if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
-    return `${Math.round(bytes)}B`;
   }
 
   function formatPercent(used: number | null | undefined, total: number | null | undefined): string {
@@ -612,13 +617,13 @@
   }
 
   function wifiSignalInfo(connected: boolean | undefined, rssi: number | null | undefined): { bars: number; label: string } {
-    if (!connected || !Number.isFinite(rssi ?? NaN)) return { bars: 0, label: "연결 안 됨" };
+    if (!connected || !Number.isFinite(rssi ?? NaN)) return { bars: 0, label: text.wifiNotConnected };
     const value = Number(rssi);
-    if (value >= -50) return { bars: 4, label: "매우 좋음" };
-    if (value >= -60) return { bars: 3, label: "좋음" };
-    if (value >= -70) return { bars: 2, label: "보통" };
-    if (value >= -80) return { bars: 1, label: "약함" };
-    return { bars: 1, label: "매우 약함" };
+    if (value >= -50) return { bars: 4, label: text.wifiExcellent };
+    if (value >= -60) return { bars: 3, label: text.wifiGood };
+    if (value >= -70) return { bars: 2, label: text.wifiFair };
+    if (value >= -80) return { bars: 1, label: text.wifiWeak };
+    return { bars: 1, label: text.wifiVeryWeak };
   }
 
   function formatUptime(seconds: number | null | undefined): string {
@@ -627,9 +632,9 @@
     const days = Math.floor(total / 86400);
     const hours = Math.floor((total % 86400) / 3600);
     const minutes = Math.floor((total % 3600) / 60);
-    if (days > 0) return `${days}일 ${hours}시간`;
-    if (hours > 0) return `${hours}시간 ${minutes}분`;
-    return `${minutes}분`;
+    if (days > 0) return text.uptimeDaysHours(days, hours);
+    if (hours > 0) return text.uptimeHoursMinutes(hours, minutes);
+    return text.uptimeMinutes(minutes);
   }
 
   const firmwareVersion = $derived(systemStatus?.firmware?.version || "-");
@@ -662,23 +667,23 @@
   const externalRamPercentText = $derived(formatPercent(externalRamUsedBytes, externalRamTotalBytes));
   const minInternalRamText = $derived(formatBytes(systemStatus?.memory?.internalMinFreeBytes ?? systemStatus?.memory?.minFreeHeap));
   const wifiInfo = $derived(wifiSignalInfo(systemStatus?.wifi?.connected, systemStatus?.wifi?.rssi));
-  const firmwareFileText = $derived(firmwareFileName ? `${firmwareFileName} · ${formatBytes(firmwareFileSize)}` : "선택 안 됨");
+  const firmwareFileText = $derived(firmwareFileName ? `${firmwareFileName} · ${formatBytes(firmwareFileSize)}` : text.notSelected);
   const firmwareActionText = $derived(
     firmwareUploadStage === "uploading"
-      ? "업로드 중"
+      ? text.firmwareUploading
       : firmwareUploadStage === "verifying"
-        ? "응답 확인 중"
+        ? text.firmwareVerifying
         : firmwareUploadStage === "selected"
-          ? "업로드"
-          : "수동으로 업데이트"
+          ? text.firmwareUpload
+          : text.firmwareManualUpdate
   );
   const firmwareUploadProgressText = $derived(
     `${firmwareUploadPercent}% · ${formatBytes(firmwareUploadLoaded)} / ${formatBytes(firmwareUploadTotal || firmwareFileSize)}`
   );
   const firmwareUploadReadyText = $derived(
     systemStatus?.flash?.otaSlotBytes
-      ? `업로드할 .bin 파일을 선택하세요. OTA 예비 공간은 ${formatBytes(systemStatus.flash.otaSlotBytes)}입니다.`
-      : "업로드할 .bin 파일을 선택하세요. OTA 예비 공간은 시스템 정보 조회 후 확인할 수 있습니다."
+      ? text.firmwareReadyWithOta(formatBytes(systemStatus.flash.otaSlotBytes))
+      : text.firmwareReadyWithoutOta
   );
 </script>
 
@@ -687,24 +692,24 @@
     <aside class="backup-side-panel">
       <div class="floorplan-workflow-card">
         <div>
-          <strong>백업 / 복원</strong>
-          <span>구역 설정, 오탐 보정 구역, 저장된 평면도와 이미지를 파일로 저장하거나 복원합니다.</span>
+          <strong>{text.title}</strong>
+          <span>{text.description}</span>
         </div>
         <dl class="floorplan-stored-summary">
           <div>
-            <dt>상태</dt>
-            <dd>{loaded ? "데이터 확인됨" : "로딩 중"}</dd>
+            <dt>{text.status}</dt>
+            <dd>{loaded ? text.dataReady : text.loading}</dd>
           </div>
           <div>
-            <dt>파일</dt>
-            <dd>{filename || "선택 안 됨"}</dd>
+            <dt>{text.file}</dt>
+            <dd>{filename || text.notSelected}</dd>
           </div>
         </dl>
       </div>
 
       <div class="floorplan-stored-tools">
-        <button type="button" disabled={!loaded || importing} onclick={handleExport}>백업하기</button>
-        <button type="button" disabled={!loaded || importing} onclick={openFilePicker}>복원하기</button>
+        <button type="button" disabled={!loaded || importing} onclick={handleExport}>{text.exportButton}</button>
+        <button type="button" disabled={!loaded || importing} onclick={openFilePicker}>{text.importButton}</button>
         <input bind:this={fileInput} type="file" accept="application/json,.json" hidden onchange={handleFileChange} />
       </div>
     </aside>
@@ -713,40 +718,40 @@
       <div class="floorplan-workflow-card">
         {#if message}
           <div class={`floorplan-status backup-message ${stage}`}>
-            <strong>{filename || "백업 파일"}</strong>
+            <strong>{filename || text.backupFile}</strong>
             <span>{message}</span>
           </div>
         {:else}
           <div class="floorplan-empty-note backup-empty-state">
-            <strong>백업 파일을 만들거나 복원할 파일을 선택하세요.</strong>
-            <span>작업 결과와 가져올 데이터 선택 항목이 여기에 표시됩니다.</span>
+            <strong>{text.emptyTitle}</strong>
+            <span>{text.emptyDescription}</span>
           </div>
         {/if}
 
         {#if summary && (stage === "ready" || stage === "warning" || stage === "imported" || stage === "exported")}
           <dl class="backup-summary floorplan-stored-summary">
             <div>
-              <dt>구역</dt>
+              <dt>{text.zones}</dt>
               <dd>{summary.softwareZones}</dd>
             </div>
             <div>
-              <dt>오탐 보정</dt>
+              <dt>{text.calibration}</dt>
               <dd>{summary.calibrationZones}</dd>
             </div>
             <div>
-              <dt>필터/둔감/제외</dt>
+              <dt>{text.filterReducedDisabled}</dt>
               <dd>{summary.filterZones}/{summary.reducedZones}/{summary.disabledZones}</dd>
             </div>
             <div>
-              <dt>평면도</dt>
-              <dd>{summary.hasFloorplan ? `포함${summary.floorplanImageBytes ? ` · ${Math.round(summary.floorplanImageBytes / 1024)}KB` : ""}` : "없음"}</dd>
+              <dt>{text.floorplan}</dt>
+              <dd>{summary.hasFloorplan ? `${text.included}${summary.floorplanImageBytes ? ` · ${Math.round(summary.floorplanImageBytes / 1024)}KB` : ""}` : text.none}</dd>
             </div>
             <div>
-              <dt>통계</dt>
+              <dt>{text.statistics}</dt>
               <dd>
                 {summary.hasStats
-                  ? `포함 · 일별 ${summary.statsDailyDays}일${summary.hasHeatmap ? " · 히트맵" : ""}`
-                  : "없음"}
+                  ? `${text.included} · ${text.dailyDays(summary.statsDailyDays)}${summary.hasHeatmap ? ` · ${text.heatmap}` : ""}`
+                  : text.none}
               </dd>
             </div>
           </dl>
@@ -755,10 +760,10 @@
         {#if showRestoreProgress}
           <div class="backup-restore-progress floorplan-edit-tool-card" data-stage={stage}>
             <div class="backup-restore-progress-header">
-              <strong>복원 진행</strong>
+              <strong>{text.restoreProgress}</strong>
               <span>{progressPercent}%</span>
             </div>
-            <div class="firmware-progress-track" aria-label="백업 복원 진행률">
+            <div class="firmware-progress-track" aria-label={text.restoreProgressAria}>
               <i style={`width: ${progressPercent}%`}></i>
             </div>
             <ol>
@@ -774,10 +779,10 @@
 
         {#if summary && (stage === "ready" || stage === "warning")}
           <div class="floorplan-edit-tool-card backup-import-options">
-            <strong>가져올 데이터</strong>
+            <strong>{text.importData}</strong>
             <label>
               <input type="checkbox" checked={importZones} disabled={importing} onchange={handleImportZonesChange} />
-              <span>구역 설정과 오탐 보정 구역</span>
+              <span>{text.importZonesAndCalibration}</span>
             </label>
             <label class:disabled={!canImportFloorplan}>
               <input
@@ -786,7 +791,7 @@
                 disabled={!canImportFloorplan || importing}
                 onchange={handleImportFloorplanChange}
               />
-              <span>평면도와 이미지</span>
+              <span>{text.importFloorplanAndImage}</span>
             </label>
             <label class:disabled={!canImportStats}>
               <input
@@ -795,14 +800,14 @@
                 disabled={!canImportStats || importing}
                 onchange={handleImportStatsChange}
               />
-              <span>통계 데이터와 히트맵</span>
+              <span>{text.importStatsAndHeatmap}</span>
             </label>
           </div>
         {/if}
 
         {#if errors.length > 0}
           <div class="backup-issues error">
-            <strong>가져올 수 없는 이유</strong>
+            <strong>{text.importErrorsTitle}</strong>
             <ul>
               {#each errors as error}
                 <li>{issueText(error)}</li>
@@ -813,7 +818,7 @@
 
         {#if warnings.length > 0}
           <div class="backup-issues warn">
-            <strong>확인이 필요한 항목</strong>
+            <strong>{text.importWarningsTitle}</strong>
             <ul>
               {#each warnings as warning}
                 <li>{issueText(warning)}</li>
@@ -824,13 +829,16 @@
 
         {#if stage === "ready" || stage === "warning" || stage === "importing"}
           <div class="floorplan-edit-tool-card backup-confirm">
-            <p>가져오기를 진행하면 선택한 데이터만 현재 장치 설정에 덮어씁니다.</p>
+            <p>{text.importConfirmDescription}</p>
             <div>
-              <button type="button" class="danger-button" disabled={!canConfirmImport || importing} onclick={handleConfirmImport}>
-                {importing ? "가져오는 중" : "선택한 데이터 가져오기"}
+              <button type="button" class="danger-button" disabled={!canConfirmImport || importing || restoreStorageBusy} onclick={handleConfirmImport}>
+                {importing ? text.importing : restoreStorageBusy ? text.importWaitingForStorage : text.importSelectedData}
               </button>
-              <button type="button" disabled={importing} onclick={handleCancelImport}>취소</button>
+              <button type="button" disabled={importing} onclick={handleCancelImport}>{text.cancel}</button>
             </div>
+            {#if restoreStorageBusy}
+              <small>{text.importStorageBusyDescription}</small>
+            {/if}
           </div>
         {/if}
       </div>
@@ -843,27 +851,27 @@
     <aside class="backup-side-panel">
       <div class="floorplan-workflow-card">
         <div>
-          <strong>펌웨어 업데이트</strong>
-          <span>장치 펌웨어를 업데이트합니다. 자동 업데이트는 배포 방식 확정 후 연결합니다.</span>
+          <strong>{text.firmwareUpdateTitle}</strong>
+          <span>{text.firmwareUpdateDescription}</span>
         </div>
         <dl class="floorplan-stored-summary">
           <div>
-            <dt>펌웨어</dt>
-            <dd>{systemStatusLoading ? "확인 중" : firmwareVersion}</dd>
+            <dt>{text.firmware}</dt>
+            <dd>{systemStatusLoading ? text.checking : firmwareVersion}</dd>
           </div>
           <div>
-            <dt>대시보드</dt>
-            <dd>{systemStatusLoading ? "확인 중" : dashboardVersion}</dd>
+            <dt>{text.dashboard}</dt>
+            <dd>{systemStatusLoading ? text.checking : dashboardVersion}</dd>
           </div>
           <div>
-            <dt>파일</dt>
+            <dt>{text.file}</dt>
             <dd>{firmwareFileText}</dd>
           </div>
         </dl>
       </div>
 
       <div class="floorplan-stored-tools">
-        <button type="button" disabled>펌웨어 업데이트</button>
+        <button type="button" disabled>{text.firmwareUpdateButton}</button>
         <button
           type="button"
           class:danger-button={firmwareUploadStage === "selected"}
@@ -880,54 +888,54 @@
     <section class="backup-result-panel">
       <div class="floorplan-workflow-card">
         <div>
-          <strong>펌웨어 업데이트</strong>
-          <span>ESPHome에서 생성한 펌웨어 파일을 장치에 직접 업로드합니다.</span>
+          <strong>{text.firmwareUpdateTitle}</strong>
+          <span>{text.firmwareManualDescription}</span>
         </div>
         {#if firmwareUploadStage === "uploading"}
           <div class="firmware-update-status active">
-            <strong>펌웨어를 업로드하는 중입니다</strong>
+            <strong>{text.firmwareUploadingTitle}</strong>
             <span>{firmwareUploadProgressText}</span>
-            <div class="firmware-progress-track" aria-label="펌웨어 업로드 진행률">
+            <div class="firmware-progress-track" aria-label={text.firmwareUploadProgressAria}>
               <i style={`width: ${firmwareUploadPercent}%`}></i>
             </div>
-            <small>업데이트 중에는 전원을 끄거나 브라우저를 닫지 마세요.</small>
+            <small>{text.firmwareDoNotClose}</small>
           </div>
         {:else if firmwareUploadStage === "verifying"}
           <div class="firmware-update-status active">
-            <strong>장치 응답을 확인하는 중입니다</strong>
+            <strong>{text.firmwareVerifyingTitle}</strong>
             <span>{firmwareUploadMessage}</span>
-            <div class="firmware-progress-track" aria-label="펌웨어 재응답 확인 진행률">
+            <div class="firmware-progress-track" aria-label={text.firmwareVerifyProgressAria}>
               <i style="width: 100%"></i>
             </div>
-            <small>재부팅 중에는 대시보드 연결이 잠시 끊길 수 있습니다.</small>
+            <small>{text.firmwareRebootDisconnectNote}</small>
           </div>
         {:else if firmwareUploadStage === "success"}
           <div class="firmware-update-status success">
-            <strong>업데이트 완료</strong>
+            <strong>{text.firmwareSuccessTitle}</strong>
             <span>{firmwareUploadMessage}</span>
-            <small>재부팅 중에는 대시보드 연결이 잠시 끊길 수 있습니다.</small>
+            <small>{text.firmwareRebootDisconnectNote}</small>
           </div>
         {:else if firmwareUploadStage === "verify-error"}
           <div class="firmware-update-status error">
-            <strong>재응답 확인 실패</strong>
+            <strong>{text.firmwareVerifyFailedTitle}</strong>
             <span>{firmwareUploadMessage}</span>
-            <small>업데이트가 진행되었을 수 있습니다. 장치가 정상 동작하면 수동으로 새로고침하세요.</small>
+            <small>{text.firmwareVerifyFailedHint}</small>
           </div>
         {:else if firmwareUploadStage === "error"}
           <div class="firmware-update-status error">
-            <strong>업데이트 실패</strong>
+            <strong>{text.firmwareFailedTitle}</strong>
             <span>{firmwareUploadMessage}</span>
-            <small>파일과 OTA 예비 공간을 확인한 뒤 다시 시도하세요.</small>
+            <small>{text.firmwareFailedHint}</small>
           </div>
         {:else if firmwareUploadStage === "selected"}
           <div class="firmware-update-status active">
-            <strong>업로드 준비됨</strong>
+            <strong>{text.firmwareReadyTitle}</strong>
             <span>{firmwareUploadMessage}</span>
-            <small>{firmwareFileText} · 업로드를 누르면 장치 업데이트가 시작됩니다.</small>
+            <small>{text.firmwareReadyHint(firmwareFileText)}</small>
           </div>
         {:else}
           <div class="floorplan-empty-note backup-empty-state">
-            <strong>수동 업데이트 대기 중</strong>
+            <strong>{text.firmwareIdleTitle}</strong>
             <span>{firmwareUploadReadyText}</span>
           </div>
         {/if}
@@ -941,16 +949,16 @@
     <aside class="backup-side-panel">
       <div class="floorplan-workflow-card danger-zone-card">
         <div>
-          <strong>위험 구역</strong>
-          <span>장치 연결, 보안 키, 저장된 설정을 되돌리는 작업입니다. 필요한 경우 먼저 백업을 만들어 두세요.</span>
+          <strong>{text.dangerZoneTitle}</strong>
+          <span>{text.dangerZoneDescription}</span>
         </div>
       </div>
 
       <div class="floorplan-stored-tools danger-zone-tools">
         <button type="button" disabled={apiKeyLoading} onclick={handleApiKeyReveal}>
-          {apiKeyLoading ? "확인 중" : "API 키 확인"}
+          {apiKeyLoading ? text.checking : text.apiKeyReveal}
         </button>
-        <button type="button" disabled>API 키 재발급</button>
+        <button type="button" disabled>{text.apiKeyRegenerate}</button>
         <button
           type="button"
           class="danger-button"
@@ -958,7 +966,7 @@
           title={bootGuardHint || undefined}
           onclick={handleRebootConfirmOpen}
         >
-          장치 재시작
+          {text.rebootDevice}
         </button>
         <button
           type="button"
@@ -967,7 +975,7 @@
           title={bootGuardHint || undefined}
           onclick={handleResetOptionsOpen}
         >
-          초기화
+          {text.resetButton}
         </button>
       </div>
     </aside>
@@ -975,38 +983,38 @@
     <section class="backup-result-panel">
       <div class="floorplan-workflow-card danger-zone-card">
         <div>
-          <strong>초기화 범위</strong>
-          <span>초기화를 누른 뒤 아래 항목을 선택하고 확인 버튼을 누르면 최종 확인 팝업을 표시합니다.</span>
+          <strong>{text.resetScopeTitle}</strong>
+          <span>{text.resetScopeDescription}</span>
         </div>
 
         {#if apiKeyVisible}
           <div class="floorplan-edit-tool-card backup-import-options danger-reset-options">
-            <strong>API 키</strong>
+            <strong>{text.apiKey}</strong>
             <code class="api-key-value">{apiKeyValue}</code>
             <span>{apiKeyMessage}</span>
-            <button type="button" onclick={handleApiKeyCopy}>복사</button>
+            <button type="button" onclick={handleApiKeyCopy}>{text.copy}</button>
           </div>
         {:else if apiKeyMessage}
           <div class="floorplan-empty-note backup-empty-state danger-reset-empty">
-            <strong>API 키</strong>
+            <strong>{text.apiKey}</strong>
             <span>{apiKeyMessage}</span>
           </div>
         {/if}
 
         {#if resetOptionsOpen}
           <div class="floorplan-edit-tool-card backup-import-options danger-reset-options">
-            <strong>초기화할 항목</strong>
+            <strong>{text.resetItemsTitle}</strong>
             <label>
               <input type="checkbox" checked={resetIncludeSettings} onchange={handleResetSettingsChange} />
-              <span>설정 데이터: API 키, software/hardware zone, calibration/filter zone, 평면도, 가구 배치, 고급 설정</span>
+              <span>{text.resetSettingsData}</span>
             </label>
             <label>
               <input type="checkbox" checked={resetIncludeWifi} onchange={handleResetWifiChange} />
-              <span>Wi-Fi 초기화: 저장된 Wi-Fi 정보를 삭제하고 설정 AP로 돌아가기</span>
+              <span>{text.resetWifiData}</span>
             </label>
             <label>
               <input type="checkbox" checked={resetIncludeStats} onchange={handleResetStatsChange} />
-              <span>통계/히트맵 데이터</span>
+              <span>{text.resetStatsData}</span>
             </label>
             <button
               type="button"
@@ -1015,13 +1023,13 @@
               title={bootGuardHint || undefined}
               onclick={handleResetConfirmRequest}
             >
-              선택한 항목 초기화
+              {text.resetSelected}
             </button>
           </div>
         {:else}
           <div class="floorplan-empty-note backup-empty-state danger-reset-empty">
-            <strong>초기화 대기 중</strong>
-            <span>왼쪽의 초기화 버튼을 누르면 초기화 범위를 선택할 수 있습니다.</span>
+            <strong>{text.resetIdleTitle}</strong>
+            <span>{text.resetIdleDescription}</span>
           </div>
         {/if}
       </div>
@@ -1034,16 +1042,16 @@
     <aside class="backup-side-panel">
       <div class="floorplan-workflow-card">
         <div>
-          <strong>시스템 정보</strong>
-          <span>ESP32의 메모리, 저장소, 무선 연결 상태를 확인합니다.</span>
+          <strong>{text.systemInfoTitle}</strong>
+          <span>{text.systemInfoDescription}</span>
         </div>
         <dl class="floorplan-stored-summary">
           <div>
-            <dt>상태</dt>
-            <dd>{systemStatusLoading ? "확인 중" : systemStatusError ? "확인 실패" : systemStatus ? "데이터 확인됨" : "대기 중"}</dd>
+            <dt>{text.status}</dt>
+            <dd>{systemStatusLoading ? text.checking : systemStatusError ? text.checkFailed : systemStatus ? text.dataReady : text.waiting}</dd>
           </div>
           <div>
-            <dt>Flash 점유량</dt>
+            <dt>{text.flashOccupancy}</dt>
             <dd>{systemStatus ? flashOccupancyPercentText : "-"}</dd>
           </div>
         </dl>
@@ -1053,12 +1061,12 @@
     <section class="backup-result-panel">
       <div class="floorplan-workflow-card">
         <div>
-          <strong>시스템 정보</strong>
-          <span>{systemStatusLoading ? "장치 상태를 확인하는 중입니다." : "탭 진입 시 한 번 조회한 값입니다."}</span>
+          <strong>{text.systemInfoTitle}</strong>
+          <span>{systemStatusLoading ? text.systemCheckingDescription : text.systemSnapshotDescription}</span>
         </div>
         {#if systemStatusError}
           <div class="backup-issues error">
-            <strong>시스템 정보를 읽지 못했습니다</strong>
+            <strong>{text.systemReadFailed}</strong>
             <ul>
               <li>{systemStatusError}</li>
             </ul>
@@ -1066,48 +1074,48 @@
         {:else if systemStatus}
           <div class="backup-system-sections">
             <section class="backup-system-section">
-              <strong>시스템</strong>
+              <strong>{text.systemSection}</strong>
               <dl class="backup-system-list floorplan-stored-summary">
                 <div>
-                  <dt>펌웨어</dt>
+                  <dt>{text.firmware}</dt>
                   <dd>{firmwareVersion}</dd>
                 </div>
                 <div>
-                  <dt>대시보드</dt>
+                  <dt>{text.dashboard}</dt>
                   <dd>{dashboardVersion} · {formatBytes(systemStatus.dashboard?.gzipBytes)}</dd>
                 </div>
                 <div>
-                  <dt>가동 시간</dt>
+                  <dt>{text.uptime}</dt>
                   <dd>{formatUptime(systemStatus.firmware?.uptimeSeconds)}</dd>
                 </div>
               </dl>
             </section>
 
             <section class="backup-system-section">
-              <strong>저장 공간</strong>
+              <strong>{text.storageSection}</strong>
               <dl class="backup-system-list floorplan-stored-summary">
                 <div>
-                  <dt>Flash 점유량</dt>
-                  <dd>{flashOccupancyText} · {flashOccupancyPercentText} 사용 중</dd>
+                  <dt>{text.flashOccupancy}</dt>
+                  <dd>{text.usedWithPercent(flashOccupancyText, flashOccupancyPercentText)}</dd>
                 </div>
                 <div>
-                  <dt>펌웨어 공간</dt>
+                  <dt>{text.firmwareSpace}</dt>
                   <dd>{firmwareSpaceText}</dd>
                 </div>
                 <div>
-                  <dt>OTA 예비 공간</dt>
+                  <dt>{text.otaSpace}</dt>
                   <dd>{formatBytes(systemStatus.flash?.otaSlotBytes)}</dd>
                 </div>
                 <div>
-                  <dt>저장 데이터</dt>
+                  <dt>{text.storageData}</dt>
                   <dd>{dataStorageUsedText} · {dataStoragePercentText}</dd>
                 </div>
                 <div>
-                  <dt>평면도</dt>
+                  <dt>{text.floorplan}</dt>
                   <dd>{formatBytes(systemStatus.storage?.floorplanConfigBytes)} / {formatBytes(systemStatus.storage?.floorplanImageBytes)}</dd>
                 </div>
                 <div>
-                  <dt>설정/통계</dt>
+                  <dt>{text.settingsStats}</dt>
                   <dd>{formatBytes(systemStatus.storage?.deviceConfigBytes)} / {formatBytes(systemStatus.storage?.statsBytes)}</dd>
                 </div>
               </dl>
@@ -1117,22 +1125,22 @@
               <strong>RAM</strong>
               <dl class="backup-system-list floorplan-stored-summary">
                 <div>
-                  <dt>내부 RAM</dt>
-                  <dd>{internalRamText} · {internalRamPercentText} 사용 중</dd>
+                  <dt>{text.internalRam}</dt>
+                  <dd>{text.usedWithPercent(internalRamText, internalRamPercentText)}</dd>
                 </div>
                 <div>
-                  <dt>최저 내부 RAM 여유</dt>
+                  <dt>{text.minInternalRamFree}</dt>
                   <dd>{minInternalRamText}</dd>
                 </div>
                 <div>
-                  <dt>외장 RAM</dt>
-                  <dd>{externalRamText} · {externalRamPercentText} 사용 중</dd>
+                  <dt>{text.externalRam}</dt>
+                  <dd>{text.usedWithPercent(externalRamText, externalRamPercentText)}</dd>
                 </div>
               </dl>
             </section>
 
             <section class="backup-system-section">
-              <strong>네트워크</strong>
+              <strong>{text.networkSection}</strong>
               <dl class="backup-system-list floorplan-stored-summary">
                 <div>
                   <dt>Wi-Fi</dt>
@@ -1147,15 +1155,15 @@
                 </div>
                 <div>
                   <dt>Bluetooth</dt>
-                  <dd>{systemStatus.bluetooth?.enabled ? "활성" : "비활성"}</dd>
+                  <dd>{systemStatus.bluetooth?.enabled ? text.enabled : text.disabledState}</dd>
                 </div>
               </dl>
             </section>
           </div>
         {:else}
           <div class="floorplan-empty-note backup-empty-state">
-            <strong>시스템 정보 대기 중</strong>
-            <span>관리 / 백업 탭에 진입하면 장치 상태를 한 번 확인합니다.</span>
+            <strong>{text.systemWaitingTitle}</strong>
+            <span>{text.systemWaitingDescription}</span>
           </div>
         {/if}
       </div>
@@ -1167,13 +1175,13 @@
   <div class="demo-blocker-backdrop" role="presentation">
     <div class="demo-blocker-dialog" role="dialog" aria-modal="true" aria-labelledby="reboot-confirm-title">
       <div>
-        <strong id="reboot-confirm-title">장치를 재시작할까요?</strong>
-        <span>확인을 누르면 기기를 재시작합니다.</span>
+        <strong id="reboot-confirm-title">{text.rebootConfirmTitle}</strong>
+        <span>{text.rebootConfirmDescription}</span>
       </div>
       <div class="demo-blocker-actions">
-        <button type="button" disabled={rebootExecuting} onclick={() => (rebootConfirmOpen = false)}>취소</button>
+        <button type="button" disabled={rebootExecuting} onclick={() => (rebootConfirmOpen = false)}>{text.cancel}</button>
         <button type="button" class="danger-button" disabled={rebootExecuting} onclick={executeSystemReboot}>
-          {rebootExecuting ? "재시작 중..." : "재시작"}
+          {rebootExecuting ? text.rebooting : text.rebootButton}
         </button>
       </div>
     </div>
@@ -1184,15 +1192,15 @@
   <div class="demo-blocker-backdrop" role="presentation">
     <div class="demo-blocker-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-confirm-title">
       <div>
-        <strong id="reset-confirm-title">초기화를 진행할까요?</strong>
+        <strong id="reset-confirm-title">{text.resetConfirmTitle}</strong>
         <span>
-          선택한 데이터가 삭제됩니다. 설정 데이터 또는 Wi-Fi 초기화를 포함하면 결과를 보낸 뒤 기기를 재부팅합니다.
+          {text.resetConfirmDescription}
         </span>
       </div>
       <div class="demo-blocker-actions">
-        <button type="button" disabled={resetExecuting} onclick={() => (resetConfirmOpen = false)}>취소</button>
+        <button type="button" disabled={resetExecuting} onclick={() => (resetConfirmOpen = false)}>{text.cancel}</button>
         <button type="button" class="danger-button" disabled={resetExecuting} onclick={executeSystemReset}>
-          {resetExecuting ? "초기화 중..." : "초기화 진행"}
+          {resetExecuting ? text.resetting : text.resetConfirmButton}
         </button>
       </div>
     </div>
@@ -1206,7 +1214,7 @@
         <strong id="demo-blocker-title">{demoNoticeTitle}</strong>
         <span>{demoNoticeMessage}</span>
       </div>
-      <button type="button" class="danger-button" onclick={() => (demoNoticeOpen = false)}>닫기</button>
+      <button type="button" class="danger-button" onclick={() => (demoNoticeOpen = false)}>{messages.common.close}</button>
     </div>
   </div>
 {/if}

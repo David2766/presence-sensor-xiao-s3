@@ -14,7 +14,13 @@ export function isEmptyZone(zone: Pick<WebZone, "points">): boolean {
   return zone.points.length === 0 || zone.points.every(([x, y]) => x === 0 && y === 0);
 }
 
-export function calibrationType(type: WebZoneType): Extract<WebZoneType, "filter" | "reduced" | "disabled"> {
+const SOFTWARE_ZONE_TYPES = new Set<string>(["detection", "filter", "reduced", "disabled", "exit"]);
+
+export function normalizeZoneType(type: unknown): WebZoneType {
+  return typeof type === "string" && SOFTWARE_ZONE_TYPES.has(type) ? (type as WebZoneType) : "detection";
+}
+
+export function calibrationType(type: unknown): Extract<WebZoneType, "filter" | "reduced" | "disabled"> {
   if (type === "reduced" || type === "disabled") return type;
   return "filter";
 }
@@ -48,19 +54,24 @@ export function normalizeSoftwareConfig(config: WebDeviceConfig): WebDeviceConfi
 }
 
 export function stripPlaceholders(config: WebDeviceConfig): WebDeviceConfig {
+  const { trackerAssistPresence: _trackerAssistPresence, ...restConfig } = config;
   return {
-    ...config,
+    ...restConfig,
+    legacyPresenceFallback: config.legacyPresenceFallback === true,
     zones: config.zones
       .filter((zone) => !isEmptyZone(zone))
       .slice(0, MAX_SOFTWARE_ZONES)
       .map((zone) => {
         const { placeholder: _placeholder, ...rest } = zone;
-        return clampZoneToHardwareBounds(rest);
+        return clampZoneToHardwareBounds({
+          ...rest,
+          type: normalizeZoneType((zone as { type?: unknown }).type)
+        });
       }),
     calibrationZones: (config.calibrationZones || [])
       .filter((zone) => !isEmptyZone(zone))
       .slice(0, MAX_CALIBRATION_ZONES)
-      .map((zone) => clampZoneToHardwareBounds({ ...zone, type: calibrationType(zone.type) }))
+      .map((zone) => clampZoneToHardwareBounds({ ...zone, type: calibrationType((zone as { type?: unknown }).type) }))
   };
 }
 

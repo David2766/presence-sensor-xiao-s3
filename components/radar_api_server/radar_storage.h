@@ -15,6 +15,17 @@ enum class RadarPayloadTarget : uint8_t {
   STATS = 3,
 };
 
+enum class RadarUploadResult : uint8_t {
+  OK = 0,
+  INVALID_REQUEST,
+  SESSION_MISMATCH,
+  OFFSET_MISMATCH,
+  PAYLOAD_TOO_LARGE,
+  INCOMPLETE,
+  STORAGE_FAILED,
+  READ_FAILED,
+};
+
 struct RadarStorageHeader {
   uint32_t magic;
   uint16_t version;
@@ -48,20 +59,25 @@ class RadarStorage {
   bool write_upload_chunk(RadarPayloadTarget target, uint32_t offset, const uint8_t *data, uint32_t size,
                           uint32_t session_id);
   bool commit_upload(RadarPayloadTarget target, uint32_t session_id);
+  RadarUploadResult last_upload_result() const { return this->last_upload_result_; }
   bool delete_payload(RadarPayloadTarget target);
   bool delete_floorplan();
   bool delete_all();
 
   bool parse_target(const std::string &value, RadarPayloadTarget *target) const;
   uint32_t payload_max_size(RadarPayloadTarget target);
+  bool payload_info(RadarPayloadTarget target, uint32_t *offset, uint32_t *size);
+  bool read_storage_range(uint32_t offset, uint8_t *out, uint32_t size);
 
  private:
   const esp_partition_t *partition_{nullptr};
+  RadarUploadResult last_upload_result_{RadarUploadResult::OK};
 
   RadarStorageHeader default_header_() const;
   bool read_header_(RadarStorageHeader *header);
   bool write_header_(const RadarStorageHeader &header);
   bool read_blob_(uint32_t offset, uint32_t size, std::string *out);
+  bool hash_blob_(uint32_t offset, uint32_t size, uint32_t *hash);
   bool write_blob_(RadarPayloadTarget target, const uint8_t *data, uint32_t size,
                    RadarStorageHeader *header);
   bool write_chunk_(RadarPayloadTarget target, uint32_t offset, const uint8_t *data, uint32_t size,

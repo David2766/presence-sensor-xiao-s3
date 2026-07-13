@@ -1,11 +1,13 @@
 <script lang="ts">
   import { MAX_CALIBRATION_ZONES } from "../../core/constants";
-  import { calibrationType, zoneDisplayName } from "../../core/zones";
+  import { calibrationType } from "../../core/zones";
+  import type { Messages } from "../i18n/types";
   import type { WebZone, WebZoneType } from "../types";
 
   type CalibrationActionType = Extract<WebZoneType, "filter" | "reduced" | "disabled">;
 
   type Props = {
+    messages: Messages;
     loaded: boolean;
     hasState: boolean;
     pirMotion: boolean;
@@ -22,6 +24,7 @@
   };
 
   let {
+    messages,
     loaded,
     hasState,
     pirMotion,
@@ -36,15 +39,40 @@
     onSetZoneType,
     onDeleteZone
   }: Props = $props();
+
+  const text = $derived(messages.zones);
+
+  function defaultZoneNameIndex(name: string): string | null {
+    const match = /^(?:구역|Zone)\s*(\d+)$/.exec(name.trim());
+    return match?.[1] ?? null;
+  }
+
+  function defaultCalibrationNameIndex(name: string): string | null {
+    const match = /^(?:보정 구역|Correction zone)\s*(\d+)$/.exec(name.trim());
+    return match?.[1] ?? null;
+  }
+
+  function displayZoneName(zone: WebZone): string {
+    const name = zone.name?.trim() ?? "";
+    if (name) {
+      const defaultCalibrationIndex = defaultCalibrationNameIndex(name);
+      if (defaultCalibrationIndex) return text.calibrationZoneLabel(defaultCalibrationIndex);
+      const defaultZoneIndex = defaultZoneNameIndex(name);
+      if (defaultZoneIndex) return text.zoneLabel(defaultZoneIndex);
+      return name;
+    }
+    const match = /^calibration_(\d+)$/.exec(zone.id);
+    return match ? text.calibrationZoneLabel(match[1]) : zone.id;
+  }
 </script>
 
 <section>
-  <h2>오탐 보정</h2>
+  <h2>{text.calibrationPanelTitle}</h2>
   <div data-calibration-panel>
     <div class="calibration-card">
       <div>
-        <strong>오탐 보정</strong>
-        <span>반복적으로 감지되는 오탐 위치를 분석해 보정 구역으로 저장합니다.</span>
+        <strong>{text.calibrationPanelTitle}</strong>
+        <span>{text.calibrationDescription}</span>
       </div>
       <button
         class="calibration-button"
@@ -52,7 +80,7 @@
         disabled={!running && (!loaded || !hasState || pirMotion || zones.length >= MAX_CALIBRATION_ZONES)}
         onclick={() => (running ? onStop() : onStart())}
       >
-        {running ? "보정 중지" : "오탐 보정 시작"}
+        {running ? text.calibrationStop : text.calibrationStart}
       </button>
       <p>{statusText}</p>
       {#if zones.length}
@@ -68,12 +96,12 @@
               }}
             >
               <span>
-                {zoneDisplayName(zone)}
+                {displayZoneName(zone)}
                 <em>{calibrationTypeLabels[calibrationType(zone.type)]}</em>
               </span>
               <div class="calibration-list-actions">
                 <select
-                  aria-label="오탐 보정 동작"
+                  aria-label={text.calibrationActionAria}
                   value={calibrationType(zone.type)}
                   onchange={(event) =>
                     onSetZoneType(
@@ -81,9 +109,9 @@
                       event.currentTarget.value as CalibrationActionType
                     )}
                 >
-                  <option value="filter">필터</option>
-                  <option value="reduced">둔감</option>
-                  <option value="disabled">제외</option>
+                  <option value="filter">{text.typeLabels.filter}</option>
+                  <option value="reduced">{text.typeLabels.reduced}</option>
+                  <option value="disabled">{text.typeLabels.disabled}</option>
                 </select>
                 <button
                   type="button"
@@ -93,7 +121,7 @@
                     onDeleteZone(zone.id);
                   }}
                 >
-                  삭제
+                  {text.delete}
                 </button>
               </div>
             </div>

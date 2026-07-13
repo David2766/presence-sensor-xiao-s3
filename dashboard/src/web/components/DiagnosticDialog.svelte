@@ -12,6 +12,7 @@
   const debug = $derived(state?.debug);
   const still = $derived(debug?.still);
   const range = $derived(debug?.range);
+  const tracker = $derived(debug?.tracker);
 
   function closeFromBackdrop(event: MouseEvent): void {
     if (event.target === event.currentTarget) onClose();
@@ -150,6 +151,49 @@
         </div>
 
         <div class="diagnostic-section">
+          <strong>Tracker Shadow</strong>
+          <dl class="diagnostic-list">
+            <div>
+              <dt>추천 재실</dt>
+              <dd>{formatBool(tracker?.presence)}</dd>
+            </div>
+            <div>
+              <dt>추천 움직임</dt>
+              <dd>{formatBool(tracker?.motion)}</dd>
+            </div>
+            <div>
+              <dt>상태</dt>
+              <dd>{tracker?.state ?? "-"}</dd>
+            </div>
+            <div>
+              <dt>사유</dt>
+              <dd>{tracker?.reason ?? "-"}</dd>
+            </div>
+            <div>
+              <dt>신뢰도</dt>
+              <dd>{formatCount(tracker?.trackScore)}</dd>
+            </div>
+            <div>
+              <dt>Input / Active / Tentative / Confirmed / Coasting</dt>
+              <dd>
+                {formatCount(tracker?.inputDetectionCount)} /
+                {formatCount(tracker?.activeTrackCount)} /
+                {formatCount(tracker?.tentativeTrackCount)} /
+                {formatCount(tracker?.confirmedTrackCount)} /
+                {formatCount(tracker?.coastingTrackCount)}
+              </dd>
+            </div>
+            <div>
+              <dt>Moving / Still</dt>
+              <dd>
+                {formatCount(tracker?.movingTrackCount)} /
+                {formatCount(tracker?.stillTrackCount)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="diagnostic-section">
           <strong>최근 끊김</strong>
           <dl class="diagnostic-list">
             <div>
@@ -173,6 +217,12 @@
       {/if}
 
       <div class="floorplan-delete-dialog-actions">
+        <a class="diagnostic-log-download-button" href="/api/diagnostics/events.txt" download="presence-diagnostics.txt">
+          이벤트 로그 다운로드
+        </a>
+        <a class="diagnostic-log-download-button" href="/api/diagnostics/replay.ndjson" download="presence-replay.ndjson">
+          리플레이 로그 다운로드
+        </a>
         <button type="button" class="dashboard-dialog-close-button" onclick={onClose}>닫기</button>
       </div>
     </div>

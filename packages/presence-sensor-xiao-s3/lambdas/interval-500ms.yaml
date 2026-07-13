@@ -33,14 +33,6 @@
     return !value.empty() && value != "__EMPTY__" && value.find(needle) != std::string::npos && value.find("\"points\"") != std::string::npos;
   };
   
-  bool has_software_config = false;
-  for (int zone_index = 1; zone_index <= 6; zone_index++) {
-    if (zone_config_valid(zone_config_for(zone_index), zone_index)) {
-      has_software_config = true;
-      break;
-    }
-  }
-  
   auto zone_type_is = [&](int zone_index, const char *type) -> bool {
     const std::string zone_config = zone_config_for(zone_index);
     if (!zone_config_valid(zone_config, zone_index)) return false;
@@ -325,10 +317,13 @@
   
   // === 섹션 3: presence/motion 안정화(디바운스) 상태 계산 ===
   // 필터링되지 않은 타깃과 PIR 상태를 조합해 프론트엔드/자동 제어용 재실 및 움직임 상태를 만든다.
-  // 필터 블록 상태에서는 PIR만으로 재실/움직임이 켜지지 않도록 막아 오탐을 줄인다.
-  const bool target1_seen = id(target_1_direction_raw).state != "NA" && !id(target_1_filtered);
-  const bool target2_seen = id(target_2_direction_raw).state != "NA" && !id(target_2_filtered);
-  const bool target3_seen = id(target_3_direction_raw).state != "NA" && !id(target_3_filtered);
+  // PIR은 빠른 재실 안전망으로 filter block보다 우선한다. 움직임은 기존처럼 filter block에서 차단한다.
+  const bool target1_raw_seen = id(target_1_direction_raw).state != "NA";
+  const bool target2_raw_seen = id(target_2_direction_raw).state != "NA";
+  const bool target3_raw_seen = id(target_3_direction_raw).state != "NA";
+  const bool target1_seen = target1_raw_seen && !id(target_1_filtered);
+  const bool target2_seen = target2_raw_seen && !id(target_2_filtered);
+  const bool target3_seen = target3_raw_seen && !id(target_3_filtered);
   const float range_min_valid_mm = 100.0f;
   const float range_near_max_mm = 6000.0f;
   const float range_far_max_mm = 8000.0f;
@@ -411,117 +406,120 @@
     id(target_1_filter_blocked) ||
     id(target_2_filter_blocked) ||
     id(target_3_filter_blocked);
-  const int still_confidence_enter = 60;
-  const int still_confidence_exit = 25;
-  const int still_live_gain = 14;
-  const int still_same_area_gain = 8;
-  const int still_missing_decay = 6;
-  const int still_moving_exit_decay = 18;
-  const int still_far_target_decay = 12;
-  const float still_same_area_radius_mm = 700.0f;
-  const uint32_t still_max_hold_ms = 120000;
-  const bool live_still_target = state_still_target_count > 0;
-  const bool live_moving_target = state_moving_target_count > 0;
-  float still_x = 0.0f;
-  float still_y = 0.0f;
-  bool still_coord_valid = false;
-  auto choose_still_target = [&](bool valid, float speed, float x, float y) {
-    if (still_coord_valid || !valid || fabsf(speed) > id(dir_stationary_speed)) return;
-    if (sqrtf(x * x + y * y) <= 100.0f) return;
-    still_x = x;
-    still_y = y;
-    still_coord_valid = true;
-  };
-  choose_still_target(target1_valid, id(target_1_speed_raw).state, id(target_1_x_raw).state, id(target_1_y_raw).state);
-  choose_still_target(target2_valid, id(target_2_speed_raw).state, id(target_2_x_raw).state, id(target_2_y_raw).state);
-  choose_still_target(target3_valid, id(target_3_speed_raw).state, id(target_3_x_raw).state, id(target_3_y_raw).state);
-  bool still_same_area = false;
-  if (still_coord_valid && id(diag_still_anchor_valid)) {
-    const float dx = still_x - id(diag_still_anchor_x);
-    const float dy = still_y - id(diag_still_anchor_y);
-    still_same_area = sqrtf(dx * dx + dy * dy) <= still_same_area_radius_mm;
-  }
-  int still_confidence = id(diag_still_confidence);
-  if (state_filter_blocked) {
-    still_confidence = 0;
-    id(diag_still_confirmed) = false;
-    id(diag_still_state) = "blocked";
-    id(diag_still_reason) = "filter_blocked";
-  } else if (live_still_target) {
-    id(diag_still_last_seen_ms) = now;
-    if (still_coord_valid) {
-      if (!id(diag_still_anchor_valid) || !still_same_area) {
-        id(diag_still_anchor_x) = still_x;
-        id(diag_still_anchor_y) = still_y;
-        id(diag_still_anchor_valid) = true;
-        id(diag_still_reason) = id(diag_still_confirmed) ? "anchor_moved" : "anchor_set";
-      } else {
-        id(diag_still_anchor_x) = id(diag_still_anchor_x) * 0.75f + still_x * 0.25f;
-        id(diag_still_anchor_y) = id(diag_still_anchor_y) * 0.75f + still_y * 0.25f;
-        id(diag_still_reason) = "same_area_still";
-      }
-    } else {
-      id(diag_still_reason) = "still_no_coord";
-    }
-    still_confidence += still_live_gain + (still_same_area ? still_same_area_gain : 0);
-    if (still_confidence > 100) still_confidence = 100;
-    if (still_confidence >= still_confidence_enter) {
-      id(diag_still_confirmed) = true;
-      id(diag_still_state) = "confirmed";
-    } else {
-      id(diag_still_state) = "candidate";
-    }
-  } else if (live_moving_target) {
-    still_confidence -= still_moving_exit_decay;
-    id(diag_still_reason) = "moving_target";
-    id(diag_still_state) = id(diag_still_confirmed) ? "moving_decay" : "idle";
-  } else if (state_target_count > 0) {
-    still_confidence -= still_far_target_decay;
-    id(diag_still_reason) = "non_still_target";
-    id(diag_still_state) = id(diag_still_confirmed) ? "target_decay" : "idle";
+  id(radar_api).update_presence_replay_raw_targets(
+    target1_raw_seen, id(target_1_x_raw).state, id(target_1_y_raw).state,
+    id(target_1_speed_raw).state, id(target_1_distance_raw).state,
+    target_1_filter_mode, id(target_1_filtered), id(target_1_range_valid),
+    target2_raw_seen, id(target_2_x_raw).state, id(target_2_y_raw).state,
+    id(target_2_speed_raw).state, id(target_2_distance_raw).state,
+    target_2_filter_mode, id(target_2_filtered), id(target_2_range_valid),
+    target3_raw_seen, id(target_3_x_raw).state, id(target_3_y_raw).state,
+    id(target_3_speed_raw).state, id(target_3_distance_raw).state,
+    target_3_filter_mode, id(target_3_filtered), id(target_3_range_valid));
+  const auto tracker_zone_evidence = id(radar_api).software_zone_evidence_for_targets(
+    now,
+    target1_valid, id(target_1_x_raw).state, id(target_1_y_raw).state,
+    target2_valid, id(target_2_x_raw).state, id(target_2_y_raw).state,
+    target3_valid, id(target_3_x_raw).state, id(target_3_y_raw).state);
+  id(radar_api).update_presence_tracker(
+    now, id(pir_motion).state, state_filter_blocked, tracker_zone_evidence.room_context_configured,
+    id(illuminance_lux).state, id(dir_stationary_speed),
+    target1_valid, id(target_1_x_raw).state, id(target_1_y_raw).state,
+    id(target_1_speed_raw).state, id(target_1_distance_raw).state, tracker_zone_evidence.target_exit_masks[0],
+    tracker_zone_evidence.target_room_inside[0], tracker_zone_evidence.target_room_outside[0],
+    tracker_zone_evidence.target_room_signed_distances[0],
+    target2_valid, id(target_2_x_raw).state, id(target_2_y_raw).state,
+    id(target_2_speed_raw).state, id(target_2_distance_raw).state, tracker_zone_evidence.target_exit_masks[1],
+    tracker_zone_evidence.target_room_inside[1], tracker_zone_evidence.target_room_outside[1],
+    tracker_zone_evidence.target_room_signed_distances[1],
+    target3_valid, id(target_3_x_raw).state, id(target_3_y_raw).state,
+    id(target_3_speed_raw).state, id(target_3_distance_raw).state, tracker_zone_evidence.target_exit_masks[2],
+    tracker_zone_evidence.target_room_inside[2], tracker_zone_evidence.target_room_outside[2],
+    tracker_zone_evidence.target_room_signed_distances[2]);
+  const auto &tracker_output = id(radar_api).tracker_output();
+  const bool legacy_presence_fallback_enabled = id(radar_api).legacy_presence_fallback_enabled();
+  const bool tracker_primary_enabled = !legacy_presence_fallback_enabled;
+  const bool tracker_primary_available = tracker_primary_enabled && !state_filter_blocked;
+  const int tracker_stable_track_count =
+    tracker_output.confirmed_track_count + tracker_output.coasting_track_count;
+  const int state_target_count_effective =
+    tracker_primary_enabled ? (tracker_primary_available ? tracker_stable_track_count : 0) : state_target_count;
+  const int state_moving_target_count_effective =
+    tracker_primary_available ? tracker_output.moving_track_count : state_moving_target_count;
+  const int state_still_target_count_effective =
+    tracker_primary_available ? tracker_output.still_track_count : state_still_target_count;
+  const bool effective_target1_valid =
+    tracker_primary_enabled ? (tracker_primary_available && tracker_output.tracks[0].valid) : target1_valid;
+  const bool effective_target2_valid =
+    tracker_primary_enabled ? (tracker_primary_available && tracker_output.tracks[1].valid) : target2_valid;
+  const bool effective_target3_valid =
+    tracker_primary_enabled ? (tracker_primary_available && tracker_output.tracks[2].valid) : target3_valid;
+  const float effective_target1_x = tracker_primary_enabled ? tracker_output.tracks[0].x_mm : id(target_1_x_raw).state;
+  const float effective_target1_y = tracker_primary_enabled ? tracker_output.tracks[0].y_mm : id(target_1_y_raw).state;
+  const float effective_target2_x = tracker_primary_enabled ? tracker_output.tracks[1].x_mm : id(target_2_x_raw).state;
+  const float effective_target2_y = tracker_primary_enabled ? tracker_output.tracks[1].y_mm : id(target_2_y_raw).state;
+  const float effective_target3_x = tracker_primary_enabled ? tracker_output.tracks[2].x_mm : id(target_3_x_raw).state;
+  const float effective_target3_y = tracker_primary_enabled ? tracker_output.tracks[2].y_mm : id(target_3_y_raw).state;
+  if (legacy_presence_fallback_enabled) {
+    id(radar_api).update_legacy_presence(
+      now, id(pir_motion).state, state_filter_blocked,
+      state_target_count, state_moving_target_count, state_still_target_count, id(dir_stationary_speed),
+      target1_valid, id(target_1_x_raw).state, id(target_1_y_raw).state, id(target_1_speed_raw).state,
+      target2_valid, id(target_2_x_raw).state, id(target_2_y_raw).state, id(target_2_speed_raw).state,
+      target3_valid, id(target_3_x_raw).state, id(target_3_y_raw).state, id(target_3_speed_raw).state);
   } else {
-    still_confidence -= still_missing_decay;
-    id(diag_still_reason) = "target_missing";
-    id(diag_still_state) = id(diag_still_confirmed) ? "holding" : "idle";
+    id(radar_api).disable_legacy_presence();
   }
-  if (still_confidence < 0) still_confidence = 0;
-  id(diag_still_confidence) = still_confidence;
-  if (id(diag_still_confirmed) && still_confidence < still_confidence_exit) {
-    id(diag_still_confirmed) = false;
-    id(diag_still_state) = "lost";
-    id(diag_still_reason) = "confidence_expired";
-  }
-  if (id(diag_still_confirmed) && id(diag_still_last_seen_ms) > 0 &&
-      (now - id(diag_still_last_seen_ms)) > still_max_hold_ms) {
-    id(diag_still_confirmed) = false;
-    id(diag_still_state) = "lost";
-    id(diag_still_reason) = "max_hold_expired";
-  }
-  const bool state_still_hold_active =
-    id(diag_still_confirmed) &&
-    state_target_count == 0 &&
-    id(diag_still_last_seen_ms) > 0 &&
-    (now - id(diag_still_last_seen_ms)) <= still_max_hold_ms;
+  const auto &legacy_presence = id(radar_api).legacy_presence_output();
+  const bool state_still_hold_active = legacy_presence_fallback_enabled ? legacy_presence.still_hold_active : false;
+  const bool state_presence_tracker_raw =
+    id(pir_motion).state ? true :
+    state_filter_blocked ? false :
+    tracker_output.presence;
   const bool state_presence_raw =
-    state_target_count > 0 ? true :
-    state_still_hold_active ? true :
-    state_filter_blocked ? false :
-    id(pir_motion).state;
+    tracker_primary_enabled ? state_presence_tracker_raw : legacy_presence.presence;
   const bool state_motion_raw =
-    state_moving_target_count > 0 ? true :
-    state_filter_blocked ? false :
-    id(pir_motion).state;
+    tracker_primary_enabled ? (state_filter_blocked ? false : tracker_output.motion) :
+    legacy_presence.motion;
+  const char *state_presence_tracker_reason =
+    id(pir_motion).state ? "pir" :
+    state_filter_blocked ? "filter_blocked" :
+    tracker_output.presence ? "tracker_primary" :
+    "none";
   const char *state_presence_raw_reason =
-    state_target_count > 0 ? "target" :
-    state_still_hold_active ? "still_hold" :
+    tracker_primary_enabled ? state_presence_tracker_reason : legacy_presence.presence_reason;
+  const auto tracker_drop_reason_available = [](const char *value) -> bool {
+    if (value == nullptr || value[0] == '\0') return false;
+    return !(value[0] == 'n' && value[1] == 'o' && value[2] == 'n' && value[3] == 'e' && value[4] == '\0');
+  };
+  const char *state_tracker_off_reason =
+    tracker_drop_reason_available(tracker_output.drop_reason) ? tracker_output.drop_reason : "tracker_lost_hold_expired";
+  const char *state_motion_tracker_reason =
     state_filter_blocked ? "filter_blocked" :
     id(pir_motion).state ? "pir" :
+    tracker_output.motion ? "tracker_motion" :
     "none";
   const char *state_motion_raw_reason =
-    state_moving_target_count > 0 ? "moving_target" :
-    state_filter_blocked ? "filter_blocked" :
-    id(pir_motion).state ? "pir" :
-    "none";
+    tracker_primary_enabled ? state_motion_tracker_reason : legacy_presence.motion_reason;
+  if (legacy_presence_fallback_enabled) {
+    id(diag_still_confidence) = legacy_presence.still_confidence;
+    id(diag_still_anchor_valid) = legacy_presence.still_anchor_valid;
+    id(diag_still_anchor_x) = legacy_presence.still_anchor_x;
+    id(diag_still_anchor_y) = legacy_presence.still_anchor_y;
+    id(diag_still_last_seen_ms) = legacy_presence.still_last_seen_ms;
+    id(diag_still_confirmed) = legacy_presence.still_confirmed;
+    id(diag_still_state) = legacy_presence.still_state;
+    id(diag_still_reason) = legacy_presence.still_reason;
+  } else {
+    id(diag_still_confidence) = tracker_output.track_score;
+    id(diag_still_anchor_valid) = tracker_output.active_track_count > 0;
+    id(diag_still_anchor_x) = tracker_output.tracks[0].x_mm;
+    id(diag_still_anchor_y) = tracker_output.tracks[0].y_mm;
+    id(diag_still_last_seen_ms) = 0;
+    id(diag_still_confirmed) = tracker_output.confirmed_track_count > 0;
+    id(diag_still_state) = tracker_output.state;
+    id(diag_still_reason) = tracker_output.reason;
+  }
   if (state_target_count > 0) {
     id(diag_last_valid_target_ms) = now;
     id(diag_empty_samples_consecutive) = 0;
@@ -559,6 +557,7 @@
         state_filter_blocked ? "filter_blocked" :
         id(diag_still_reason) == "confidence_expired" ? "still_confidence_expired" :
         id(diag_still_reason) == "max_hold_expired" ? "still_max_hold_expired" :
+        tracker_primary_enabled ? state_tracker_off_reason :
         state_target_count == 0 ? "target_lost_hold_expired" :
         "unknown";
       id(diag_last_presence_reason) = id(diag_last_presence_off_reason);
@@ -575,218 +574,89 @@
   // === 섹션 4: 프론트엔드용 state JSON 직렬화 ===
   // 현재 감지 상태, 타깃 좌표, 필터/보정 상태, 환경값을 웹 대시보드가 읽는 JSON으로 만든다.
   // 필드명과 구조는 프론트엔드가 의존하므로 순서와 의미를 보존해야 한다.
-  auto state_target_json = [](const char *id_name, const char *label, const char *color, float x, float y, bool active) -> std::string {
-    std::string json = "{\"id\":\"";
-    json += id_name;
-    json += "\",\"name\":\"";
-    json += label;
-    json += "\",\"color\":\"";
-    json += color;
-    json += "\",\"x\":";
-    json += std::to_string((int) lroundf(x));
-    json += ",\"y\":";
-    json += std::to_string((int) lroundf(y));
-    json += ",\"active\":";
-    json += active ? "true" : "false";
-    json += "}";
-    return json;
-  };
-  auto json_string_value = [](const std::string &json, const char *key, const char *fallback) -> std::string {
-    const std::string needle = std::string("\"") + key + "\":\"";
-    const size_t value_start = json.find(needle);
-    if (value_start == std::string::npos) return fallback;
-    size_t cursor = value_start + needle.size();
-    bool escaped = false;
-    while (cursor < json.size()) {
-      const char current = json[cursor];
-      if (escaped) {
-        escaped = false;
-      } else if (current == '\\') {
-        escaped = true;
-      } else if (current == '"') {
-        return json.substr(value_start + needle.size(), cursor - (value_start + needle.size()));
-      }
-      cursor++;
-    }
-    return fallback;
-  };
-  auto state_zone_json = [&](int zone_index, int target_count) -> std::string {
-    const std::string zone_config = zone_config_for(zone_index);
-    const std::string zone_id = std::string("zone_") + std::to_string(zone_index);
-    const std::string zone_name = json_string_value(zone_config, "name", "");
-    const std::string zone_type = json_string_value(zone_config, "type", "detection");
-    std::string json = "{\"id\":\"";
-    json += zone_id;
-    json += "\",\"name\":\"";
-    json += zone_name.empty() ? zone_id : zone_name;
-    json += "\",\"type\":\"";
-    json += zone_type;
-    json += "\",\"presence\":";
-    json += target_count > 0 ? "true" : "false";
-    json += ",\"targetCount\":";
-    json += std::to_string(target_count);
-    json += "}";
-    return json;
-  };
-  auto append_state_float = [](std::string &json, const char *name, float value, const char *format) {
-    json += ",\"";
-    json += name;
-    json += "\":";
-    if (isnan(value)) {
-      json += "null";
-      return;
-    }
-    char value_buf[24];
-    snprintf(value_buf, sizeof(value_buf), format, value);
-    json += value_buf;
-  };
   const bool heatmap_record_due = id(heatmap_last_record_ms) == 0 || (now - id(heatmap_last_record_ms)) >= 5000;
-  if (heatmap_record_due && (target1_valid || target2_valid || target3_valid)) {
-    if (target1_valid) record_heatmap_hit(id(target_1_x_raw).state, id(target_1_y_raw).state);
-    if (target2_valid) record_heatmap_hit(id(target_2_x_raw).state, id(target_2_y_raw).state);
-    if (target3_valid) record_heatmap_hit(id(target_3_x_raw).state, id(target_3_y_raw).state);
+  if (heatmap_record_due && (effective_target1_valid || effective_target2_valid || effective_target3_valid)) {
+    if (effective_target1_valid) record_heatmap_hit(effective_target1_x, effective_target1_y);
+    if (effective_target2_valid) record_heatmap_hit(effective_target2_x, effective_target2_y);
+    if (effective_target3_valid) record_heatmap_hit(effective_target3_x, effective_target3_y);
     id(heatmap_last_record_ms) = now;
   }
   
-  int software_zone_counts[6] = {0, 0, 0, 0, 0, 0};
-  int target_1_software_mask = 0;
-  int target_2_software_mask = 0;
-  int target_3_software_mask = 0;
-  int detection_zone_count = 0;
-  int filter_zone_count = 0;
-  for (int zone_index = 1; zone_index <= 6; zone_index++) {
-    if (software_zone_type_is(zone_index, "detection")) {
-      detection_zone_count++;
-      const int zone_bit = 1 << (zone_index - 1);
-      if (target1_valid && software_zone_contains(zone_index, id(target_1_x_raw).state, id(target_1_y_raw).state)) {
-        software_zone_counts[zone_index - 1]++;
-        target_1_software_mask |= zone_bit;
-      }
-      if (target2_valid && software_zone_contains(zone_index, id(target_2_x_raw).state, id(target_2_y_raw).state)) {
-        software_zone_counts[zone_index - 1]++;
-        target_2_software_mask |= zone_bit;
-      }
-      if (target3_valid && software_zone_contains(zone_index, id(target_3_x_raw).state, id(target_3_y_raw).state)) {
-        software_zone_counts[zone_index - 1]++;
-        target_3_software_mask |= zone_bit;
-      }
-    } else if (software_zone_type_is(zone_index, "filter")) {
-      filter_zone_count++;
-    }
-  }
-  record_software_zone_transitions(1, target1_valid ? target_1_software_mask : 0);
-  record_software_zone_transitions(2, target2_valid ? target_2_software_mask : 0);
-  record_software_zone_transitions(3, target3_valid ? target_3_software_mask : 0);
-  id(software_zone_configured_state) = has_software_config;
-  id(software_detection_zone_count_state) = detection_zone_count;
-  id(software_filter_zone_count_state) = filter_zone_count;
-  id(software_zone_1_target_count_state) = software_zone_counts[0];
-  id(software_zone_2_target_count_state) = software_zone_counts[1];
-  id(software_zone_3_target_count_state) = software_zone_counts[2];
-  id(software_zone_4_target_count_state) = software_zone_counts[3];
-  id(software_zone_5_target_count_state) = software_zone_counts[4];
-  id(software_zone_6_target_count_state) = software_zone_counts[5];
-  id(software_zone_1_presence_state) = software_zone_counts[0] > 0;
-  id(software_zone_2_presence_state) = software_zone_counts[1] > 0;
-  id(software_zone_3_presence_state) = software_zone_counts[2] > 0;
-  id(software_zone_4_presence_state) = software_zone_counts[3] > 0;
-  id(software_zone_5_presence_state) = software_zone_counts[4] > 0;
-  id(software_zone_6_presence_state) = software_zone_counts[5] > 0;
-
-  std::string state_json = "{\"version\":1,\"connected\":true,\"updatedAt\":";
-  state_json += std::to_string((uint32_t) now);
-  state_json += ",\"pirMotion\":";
-  state_json += id(pir_motion).state ? "true" : "false";
-  state_json += ",\"pirMotionEffective\":";
-  state_json += state_pir_motion_effective ? "true" : "false";
-  state_json += ",\"filterBlocked\":";
-  state_json += state_filter_blocked ? "true" : "false";
-  state_json += ",\"presence\":";
-  state_json += id(state_presence_stable) ? "true" : "false";
-  state_json += ",\"motion\":";
-  state_json += id(state_motion_stable) ? "true" : "false";
-  state_json += ",\"targetCount\":";
-  state_json += std::to_string(id(cnt_stable_total));
-  state_json += ",\"movingTargetCount\":";
-  state_json += std::to_string(state_moving_target_count);
-  state_json += ",\"stillTargetCount\":";
-  state_json += std::to_string(state_still_target_count);
-  append_state_float(state_json, "temperatureC", id(temperature_corrected).state, "%.1f");
-  append_state_float(state_json, "humidityPercent", id(humidity_corrected).state, "%.1f");
-  append_state_float(state_json, "illuminanceLux", id(illuminance_lux).state, "%.0f");
-  state_json += ",\"debug\":{\"presenceReason\":\"";
-  state_json += id(diag_last_presence_reason);
-  state_json += "\",\"presenceOffReason\":\"";
-  state_json += id(diag_last_presence_off_reason);
-  state_json += "\",\"motionReason\":\"";
-  state_json += id(diag_last_motion_reason);
-  state_json += "\",\"lastPresenceDropMs\":";
-  state_json += std::to_string(id(diag_last_presence_drop_ms));
-  state_json += ",\"lastValidTargetAgeMs\":";
-  if (id(diag_last_valid_target_ms) == 0) {
-    state_json += "null";
-  } else {
-    state_json += std::to_string(now - id(diag_last_valid_target_ms));
-  }
-  state_json += ",\"emptySamplesConsecutive\":";
-  state_json += std::to_string(id(diag_empty_samples_consecutive));
-  state_json += ",\"shortPresenceDropCount\":";
-  state_json += std::to_string(id(diag_short_presence_drop_count));
-  state_json += ",\"longPresenceDropCount\":";
-  state_json += std::to_string(id(diag_long_presence_drop_count));
-  state_json += ",\"still\":{\"state\":\"";
-  state_json += id(diag_still_state);
-  state_json += "\",\"reason\":\"";
-  state_json += id(diag_still_reason);
-  state_json += "\",\"confidence\":";
-  state_json += std::to_string(id(diag_still_confidence));
-  state_json += ",\"holdActive\":";
-  state_json += state_still_hold_active ? "true" : "false";
-  state_json += ",\"lastSeenAgeMs\":";
-  if (id(diag_still_last_seen_ms) == 0) {
-    state_json += "null";
-  } else {
-    state_json += std::to_string(now - id(diag_still_last_seen_ms));
-  }
-  state_json += ",\"anchor\":";
-  if (!id(diag_still_anchor_valid)) {
-    state_json += "null";
-  } else {
-    state_json += "{\"x\":";
-    state_json += std::to_string((int) lroundf(id(diag_still_anchor_x)));
-    state_json += ",\"y\":";
-    state_json += std::to_string((int) lroundf(id(diag_still_anchor_y)));
-    state_json += "}";
-  }
-  state_json += "},\"range\":{\"reason\":\"";
-  state_json += id(diag_range_reason);
-  state_json += "\",\"suspectTargetCount\":";
-  state_json += std::to_string(id(diag_range_suspect_count));
-  state_json += ",\"outOfRangeTargetCount\":";
-  state_json += std::to_string(id(diag_range_out_of_range_count));
-  state_json += ",\"remoteCandidateCount\":";
-  state_json += std::to_string(id(diag_range_remote_candidate_count));
-  state_json += "}";
-  state_json += "}";
-  state_json += ",\"targets\":[";
-  state_json += state_target_json("target_1", "T1", "#ff6b7a", id(target_1_x_raw).state, id(target_1_y_raw).state,
-                                  target1_valid);
-  state_json += ",";
-  state_json += state_target_json("target_2", "T2", "#ffd166", id(target_2_x_raw).state, id(target_2_y_raw).state,
-                                  target2_valid);
-  state_json += ",";
-  state_json += state_target_json("target_3", "T3", "#06d6a0", id(target_3_x_raw).state, id(target_3_y_raw).state,
-                                  target3_valid);
-  state_json += "],\"zones\":[";
-  bool first_state_zone = true;
-  for (int zone_index = 1; zone_index <= 6; zone_index++) {
-    if (!zone_config_valid(zone_config_for(zone_index), zone_index)) continue;
-    if (!first_state_zone) state_json += ",";
-    state_json += state_zone_json(zone_index, software_zone_counts[zone_index - 1]);
-    first_state_zone = false;
-  }
-  state_json += "]}";
-  id(radar_api).update_state_json(state_json);
+  id(radar_api).update_software_zone_evidence(
+    now,
+    effective_target1_valid, effective_target1_x, effective_target1_y,
+    effective_target2_valid, effective_target2_x, effective_target2_y,
+    effective_target3_valid, effective_target3_x, effective_target3_y);
+  const auto &zone_evidence = id(radar_api).software_zone_evidence();
+  record_software_zone_transitions(1, effective_target1_valid ? zone_evidence.target_software_masks[0] : 0);
+  record_software_zone_transitions(2, effective_target2_valid ? zone_evidence.target_software_masks[1] : 0);
+  record_software_zone_transitions(3, effective_target3_valid ? zone_evidence.target_software_masks[2] : 0);
+  id(software_zone_configured_state) = zone_evidence.configured;
+  id(software_detection_zone_count_state) = zone_evidence.detection_zone_count;
+  id(software_filter_zone_count_state) = zone_evidence.filter_zone_count;
+  id(software_zone_1_target_count_state) = zone_evidence.detection_zone_counts[0];
+  id(software_zone_2_target_count_state) = zone_evidence.detection_zone_counts[1];
+  id(software_zone_3_target_count_state) = zone_evidence.detection_zone_counts[2];
+  id(software_zone_4_target_count_state) = zone_evidence.detection_zone_counts[3];
+  id(software_zone_5_target_count_state) = zone_evidence.detection_zone_counts[4];
+  id(software_zone_6_target_count_state) = zone_evidence.detection_zone_counts[5];
+  id(software_zone_1_presence_state) = zone_evidence.detection_zone_counts[0] > 0;
+  id(software_zone_2_presence_state) = zone_evidence.detection_zone_counts[1] > 0;
+  id(software_zone_3_presence_state) = zone_evidence.detection_zone_counts[2] > 0;
+  id(software_zone_4_presence_state) = zone_evidence.detection_zone_counts[3] > 0;
+  id(software_zone_5_presence_state) = zone_evidence.detection_zone_counts[4] > 0;
+  id(software_zone_6_presence_state) = zone_evidence.detection_zone_counts[5] > 0;
+  esphome::radar_api_server::DeviceStateJsonInput state_json_input;
+  state_json_input.now_ms = now;
+  state_json_input.pir_motion = id(pir_motion).state;
+  state_json_input.pir_motion_effective = state_pir_motion_effective;
+  state_json_input.filter_blocked = state_filter_blocked;
+  state_json_input.presence = id(state_presence_stable);
+  state_json_input.motion = id(state_motion_stable);
+  state_json_input.target_count = tracker_primary_enabled ? state_target_count_effective : id(cnt_stable_total);
+  state_json_input.moving_target_count = state_moving_target_count_effective;
+  state_json_input.still_target_count = state_still_target_count_effective;
+  state_json_input.temperature_c = id(temperature_corrected).state;
+  state_json_input.humidity_percent = id(humidity_corrected).state;
+  state_json_input.illuminance_lux = id(illuminance_lux).state;
+  state_json_input.presence_reason = id(diag_last_presence_reason).c_str();
+  state_json_input.presence_off_reason = id(diag_last_presence_off_reason).c_str();
+  state_json_input.motion_reason = id(diag_last_motion_reason).c_str();
+  state_json_input.last_presence_drop_ms = id(diag_last_presence_drop_ms);
+  state_json_input.has_last_valid_target_age = id(diag_last_valid_target_ms) != 0;
+  state_json_input.last_valid_target_age_ms =
+    state_json_input.has_last_valid_target_age ? now - id(diag_last_valid_target_ms) : 0;
+  state_json_input.empty_samples_consecutive = id(diag_empty_samples_consecutive);
+  state_json_input.short_presence_drop_count = id(diag_short_presence_drop_count);
+  state_json_input.long_presence_drop_count = id(diag_long_presence_drop_count);
+  state_json_input.still_state = id(diag_still_state).c_str();
+  state_json_input.still_reason = id(diag_still_reason).c_str();
+  state_json_input.still_confidence = id(diag_still_confidence);
+  state_json_input.still_hold_active = state_still_hold_active;
+  state_json_input.has_still_last_seen_age = id(diag_still_last_seen_ms) != 0;
+  state_json_input.still_last_seen_age_ms =
+    state_json_input.has_still_last_seen_age ? now - id(diag_still_last_seen_ms) : 0;
+  state_json_input.still_anchor_valid = id(diag_still_anchor_valid);
+  state_json_input.still_anchor_x = id(diag_still_anchor_x);
+  state_json_input.still_anchor_y = id(diag_still_anchor_y);
+  state_json_input.range_reason = id(diag_range_reason).c_str();
+  state_json_input.range_suspect_count = id(diag_range_suspect_count);
+  state_json_input.range_out_of_range_count = id(diag_range_out_of_range_count);
+  state_json_input.range_remote_candidate_count = id(diag_range_remote_candidate_count);
+  state_json_input.targets[0] = {"target_1", "T1", "#ff6b7a", effective_target1_x, effective_target1_y, effective_target1_valid};
+  state_json_input.targets[1] = {"target_2", "T2", "#ffd166", effective_target2_x, effective_target2_y, effective_target2_valid};
+  state_json_input.targets[2] = {"target_3", "T3", "#06d6a0", effective_target3_x, effective_target3_y, effective_target3_valid};
+  id(radar_api).update_device_state_json(state_json_input);
+  id(radar_api).update_diagnostic_snapshot(
+    id(state_presence_stable), id(state_motion_stable), id(pir_motion).state,
+    state_target_count_effective, state_moving_target_count_effective, state_still_target_count_effective,
+    id(diag_still_confidence), state_still_hold_active, id(diag_empty_samples_consecutive),
+    id(diag_range_suspect_count), id(diag_range_out_of_range_count), id(diag_range_remote_candidate_count),
+    id(illuminance_lux).state, id(diag_last_presence_reason).c_str(),
+    id(diag_last_presence_off_reason).c_str(), id(diag_last_motion_reason).c_str(),
+    id(diag_still_state).c_str(), id(diag_still_reason).c_str(), id(diag_range_reason).c_str(),
+    zone_evidence.exit_zone_active, zone_evidence.exit_zone_mask, zone_evidence.exit_target_count,
+    zone_evidence.exit_last_seen_age_ms);
   
   // === 섹션 5: 일별 통계 롤오버 및 저장 ===
   // SNTP 날짜 기준으로 오늘 통계를 갱신하고, 날짜가 바뀌면 전날 통계를 저장한 뒤 오늘 값을 초기화한다.

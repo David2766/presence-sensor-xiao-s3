@@ -4,6 +4,8 @@ import {
   renameZone,
   setZoneType
 } from "../zone-geometry";
+import { zoneGeometryMessage } from "../i18n/zone-geometry";
+import type { Messages } from "../i18n/types";
 import type { WebDeviceConfig, WebZone, WebZoneType } from "../types";
 
 type StatusTone = "ok" | "warn" | "error";
@@ -12,6 +14,7 @@ interface ZoneEditorOptions {
   getConfig: () => WebDeviceConfig | null;
   getZones: () => WebZone[];
   getCalibrationZones: () => WebZone[];
+  getMessages: () => Messages;
   updateConfig: (mutator: (current: WebDeviceConfig) => WebDeviceConfig) => void;
   setStatus: (message: string, tone: StatusTone) => void;
   onSelect: (zoneId: string, resetPoint: boolean, render: boolean) => void;
@@ -21,6 +24,7 @@ export function createZoneEditor({
   getConfig,
   getZones,
   getCalibrationZones,
+  getMessages,
   updateConfig,
   setStatus,
   onSelect
@@ -41,12 +45,13 @@ export function createZoneEditor({
     selectZone(getZones()[0]?.id || getCalibrationZones()[0]?.id || "");
   }
 
-  function addZone(): void {
+  function addZone(type: WebZoneType = "detection"): void {
     const config = getConfig();
     if (!config) return;
-    const result = addSoftwareZone(config);
+    const result = addSoftwareZone(config, type);
     if (!result.changed) {
-      if (result.message) setStatus(result.message, "warn");
+      const message = zoneGeometryMessage(getMessages(), result.messageCode, result.messageParams);
+      if (message) setStatus(message, "warn");
       return;
     }
     updateConfig(() => result.config);

@@ -2,9 +2,407 @@
 
 #include <algorithm>
 #include <cstring>
+#include <esp_http_server.h>
 
 namespace esphome {
 namespace radar_api_server {
+
+namespace {
+
+static constexpr uint32_t STATS_INTERNAL_UPLOAD_SESSION = 0x53544154u;
+static constexpr size_t STATS_STORAGE_WRITE_CHUNK_SIZE = 512;
+static constexpr size_t STATS_STORAGE_READ_CHUNK_SIZE = 512;
+static constexpr size_t MAX_STATS_JSON_VALUE_SIZE = 16 * 1024;
+static constexpr size_t MAX_STATS_DAILY_ENTRIES = 30;
+
+struct CountJsonContext {
+  uint32_t size{0};
+};
+
+struct HttpJsonContext {
+  httpd_req *request{nullptr};
+};
+
+struct StorageJsonContext {
+  RadarStorage *storage{nullptr};
+  uint32_t session{0};
+  uint32_t offset{0};
+  char buffer[STATS_STORAGE_WRITE_CHUNK_SIZE]{};
+  size_t used{0};
+};
+
+struct StatsJsonParts {
+  std::string today;
+  std::vector<std::string> daily;
+  std::string heatmap_today;
+  std::vector<std::string> heatmap_daily;
+};
+
+class StorageJsonReader {
+ public:
+  StorageJsonReader(RadarStorage *storage, uint32_t offset, uint32_t size) : storage_(storage), offset_(offset), size_(size) {}
+
+  bool read(char *out) {
+    if (out == nullptr)
+      return false;
+    if (this->has_peek_) {
+      *out = this->peek_;
+      this->has_peek_ = false;
+      return true;
+    }
+    if (this->buffer_pos_ >= this->buffer_len_ && !this->fill_())
+      return false;
+    *out = this->buffer_[this->buffer_pos_++];
+    return true;
+  }
+
+  bool peek(char *out) {
+    if (out == nullptr)
+      return false;
+    if (!this->has_peek_) {
+      if (!this->read(&this->peek_))
+        return false;
+      this->has_peek_ = true;
+    }
+    *out = this->peek_;
+    return true;
+  }
+
+ private:
+  bool fill_() {
+    if (this->read_pos_ >= this->size_ || this->storage_ == nullptr)
+      return false;
+    const uint32_t chunk = std::min<uint32_t>(sizeof(this->buffer_), this->size_ - this->read_pos_);
+    if (!this->storage_->read_storage_range(this->offset_ + this->read_pos_, reinterpret_cast<uint8_t *>(this->buffer_),
+                                            chunk))
+      return false;
+    this->read_pos_ += chunk;
+    this->buffer_pos_ = 0;
+    this->buffer_len_ = chunk;
+    return true;
+  }
+
+  RadarStorage *storage_{nullptr};
+  uint32_t offset_{0};
+  uint32_t size_{0};
+  uint32_t read_pos_{0};
+  char buffer_[STATS_STORAGE_READ_CHUNK_SIZE]{};
+  uint32_t buffer_pos_{0};
+  uint32_t buffer_len_{0};
+  bool has_peek_{false};
+  char peek_{0};
+};
+
+bool count_json_write(void *context, const char *, size_t size) {
+  auto *counter = static_cast<CountJsonContext *>(context);
+  if (counter == nullptr || size > UINT32_MAX - counter->size)
+    return false;
+  counter->size += static_cast<uint32_t>(size);
+  return true;
+}
+
+bool http_json_write(void *context, const char *data, size_t size) {
+  auto *http = static_cast<HttpJsonContext *>(context);
+  return http != nullptr && http->request != nullptr && httpd_resp_send_chunk(http->request, data, size) == ESP_OK;
+}
+
+bool flush_storage_json(StorageJsonContext *context) {
+  if (context == nullptr || context->storage == nullptr)
+    return false;
+  if (context->used == 0)
+    return true;
+  const bool ok = context->storage->write_upload_chunk(
+      RadarPayloadTarget::STATS, context->offset, reinterpret_cast<const uint8_t *>(context->buffer),
+      static_cast<uint32_t>(context->used), context->session);
+  if (!ok)
+    return false;
+  context->offset += static_cast<uint32_t>(context->used);
+  context->used = 0;
+  return true;
+}
+
+bool storage_json_write(void *context, const char *data, size_t size) {
+  auto *storage = static_cast<StorageJsonContext *>(context);
+  if (storage == nullptr || data == nullptr)
+    return false;
+
+  size_t cursor = 0;
+  while (cursor < size) {
+    if (storage->used >= sizeof(storage->buffer) && !flush_storage_json(storage))
+      return false;
+    const size_t chunk = std::min<size_t>(sizeof(storage->buffer) - storage->used, size - cursor);
+    std::memcpy(storage->buffer + storage->used, data + cursor, chunk);
+    storage->used += chunk;
+    cursor += chunk;
+  }
+  return true;
+}
+
+bool skip_json_ws(StorageJsonReader *reader) {
+  if (reader == nullptr)
+    return false;
+  char ch = 0;
+  while (reader->peek(&ch)) {
+    if (ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
+      return true;
+    reader->read(&ch);
+  }
+  return false;
+}
+
+bool read_json_string(StorageJsonReader *reader, std::string *out, size_t max_size) {
+  if (reader == nullptr || out == nullptr)
+    return false;
+  out->clear();
+  char ch = 0;
+  if (!reader->read(&ch) || ch != '"')
+    return false;
+  bool escaped = false;
+  while (reader->read(&ch)) {
+    if (escaped) {
+      if (out->size() >= max_size)
+        return false;
+      out->push_back(ch);
+      escaped = false;
+      continue;
+    }
+    if (ch == '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch == '"')
+      return true;
+    if (out->size() >= max_size)
+      return false;
+    out->push_back(ch);
+  }
+  return false;
+}
+
+bool skip_json_string(StorageJsonReader *reader) {
+  if (reader == nullptr)
+    return false;
+  char ch = 0;
+  if (!reader->read(&ch) || ch != '"')
+    return false;
+  bool escaped = false;
+  while (reader->read(&ch)) {
+    if (escaped) {
+      escaped = false;
+    } else if (ch == '\\') {
+      escaped = true;
+    } else if (ch == '"') {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool capture_json_compound(StorageJsonReader *reader, char open, char close, std::string *out, size_t max_size) {
+  if (reader == nullptr || out == nullptr)
+    return false;
+  out->clear();
+  char ch = 0;
+  if (!reader->read(&ch) || ch != open)
+    return false;
+  out->push_back(ch);
+  int depth = 1;
+  bool in_string = false;
+  bool escaped = false;
+  while (reader->read(&ch)) {
+    if (out->size() >= max_size)
+      return false;
+    out->push_back(ch);
+    if (in_string) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch == '\\') {
+        escaped = true;
+      } else if (ch == '"') {
+        in_string = false;
+      }
+      continue;
+    }
+    if (ch == '"') {
+      in_string = true;
+    } else if (ch == open) {
+      depth++;
+    } else if (ch == close) {
+      depth--;
+      if (depth == 0)
+        return true;
+    }
+  }
+  return false;
+}
+
+bool skip_json_compound(StorageJsonReader *reader, char open, char close) {
+  if (reader == nullptr)
+    return false;
+  char ch = 0;
+  if (!reader->read(&ch) || ch != open)
+    return false;
+  int depth = 1;
+  bool in_string = false;
+  bool escaped = false;
+  while (reader->read(&ch)) {
+    if (in_string) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch == '\\') {
+        escaped = true;
+      } else if (ch == '"') {
+        in_string = false;
+      }
+      continue;
+    }
+    if (ch == '"') {
+      in_string = true;
+    } else if (ch == open) {
+      depth++;
+    } else if (ch == close) {
+      depth--;
+      if (depth == 0)
+        return true;
+    }
+  }
+  return false;
+}
+
+bool skip_json_primitive(StorageJsonReader *reader) {
+  if (reader == nullptr)
+    return false;
+  char ch = 0;
+  while (reader->peek(&ch)) {
+    if (ch == ',' || ch == '}' || ch == ']')
+      return true;
+    reader->read(&ch);
+  }
+  return true;
+}
+
+bool skip_json_value(StorageJsonReader *reader) {
+  if (!skip_json_ws(reader))
+    return false;
+  char ch = 0;
+  if (!reader->peek(&ch))
+    return false;
+  if (ch == '"')
+    return skip_json_string(reader);
+  if (ch == '{')
+    return skip_json_compound(reader, '{', '}');
+  if (ch == '[')
+    return skip_json_compound(reader, '[', ']');
+  return skip_json_primitive(reader);
+}
+
+bool read_json_object_array(StorageJsonReader *reader, std::vector<std::string> *out) {
+  if (reader == nullptr || out == nullptr)
+    return false;
+  char ch = 0;
+  if (!skip_json_ws(reader) || !reader->read(&ch) || ch != '[')
+    return false;
+  while (skip_json_ws(reader)) {
+    if (!reader->peek(&ch))
+      return false;
+    if (ch == ']') {
+      reader->read(&ch);
+      return true;
+    }
+    if (ch == '{') {
+      std::string object;
+      if (!capture_json_compound(reader, '{', '}', &object, MAX_STATS_JSON_VALUE_SIZE))
+        return false;
+      if (out->size() < MAX_STATS_DAILY_ENTRIES)
+        out->push_back(object);
+    } else if (!skip_json_value(reader)) {
+      return false;
+    }
+    if (!skip_json_ws(reader) || !reader->read(&ch))
+      return false;
+    if (ch == ']')
+      return true;
+    if (ch != ',')
+      return false;
+  }
+  return false;
+}
+
+bool parse_heatmap_object(StorageJsonReader *reader, StatsJsonParts *parts) {
+  if (reader == nullptr || parts == nullptr)
+    return false;
+  char ch = 0;
+  if (!skip_json_ws(reader) || !reader->read(&ch) || ch != '{')
+    return false;
+  while (skip_json_ws(reader)) {
+    if (!reader->peek(&ch))
+      return false;
+    if (ch == '}') {
+      reader->read(&ch);
+      return true;
+    }
+    std::string key;
+    if (!read_json_string(reader, &key, 64) || !skip_json_ws(reader) || !reader->read(&ch) || ch != ':')
+      return false;
+    if (key == "today") {
+      if (!skip_json_ws(reader) || !read_json_string(reader, &parts->heatmap_today, MAX_STATS_JSON_VALUE_SIZE))
+        return false;
+    } else if (key == "daily") {
+      if (!read_json_object_array(reader, &parts->heatmap_daily))
+        return false;
+    } else if (!skip_json_value(reader)) {
+      return false;
+    }
+    if (!skip_json_ws(reader) || !reader->read(&ch))
+      return false;
+    if (ch == '}')
+      return true;
+    if (ch != ',')
+      return false;
+  }
+  return false;
+}
+
+bool parse_stats_document(StorageJsonReader *reader, StatsJsonParts *parts) {
+  if (reader == nullptr || parts == nullptr)
+    return false;
+  char ch = 0;
+  if (!skip_json_ws(reader) || !reader->read(&ch) || ch != '{')
+    return false;
+  while (skip_json_ws(reader)) {
+    if (!reader->peek(&ch))
+      return false;
+    if (ch == '}') {
+      reader->read(&ch);
+      return true;
+    }
+    std::string key;
+    if (!read_json_string(reader, &key, 64) || !skip_json_ws(reader) || !reader->read(&ch) || ch != ':')
+      return false;
+    if (key == "today") {
+      if (!skip_json_ws(reader) ||
+          !capture_json_compound(reader, '{', '}', &parts->today, MAX_STATS_JSON_VALUE_SIZE))
+        return false;
+    } else if (key == "daily") {
+      if (!read_json_object_array(reader, &parts->daily))
+        return false;
+    } else if (key == "heatmap") {
+      if (!parse_heatmap_object(reader, parts))
+        return false;
+    } else if (!skip_json_value(reader)) {
+      return false;
+    }
+    if (!skip_json_ws(reader) || !reader->read(&ch))
+      return false;
+    if (ch == '}')
+      return true;
+    if (ch != ',')
+      return false;
+  }
+  return false;
+}
+
+}  // namespace
 
 void StatsStore::load(RadarStorage *storage) {
   this->storage_ = storage;
@@ -13,16 +411,8 @@ void StatsStore::load(RadarStorage *storage) {
   this->today_heatmap_cells_.fill(0);
   this->heatmap_daily_.clear();
 
-  std::string data;
-  if (storage != nullptr && storage->read_payload(RadarPayloadTarget::STATS, &data)) {
-    this->today_json_ = extract_object_(data, "today");
-    this->daily_ = extract_object_array_(data, "daily");
-    const std::string heatmap = extract_object_(data, "heatmap");
-    decode_heatmap_rle_(extract_string_(heatmap, "today"), &this->today_heatmap_cells_);
-    this->heatmap_daily_ = extract_object_array_(heatmap, "daily");
-    this->trim_daily_();
-    this->trim_heatmap_daily_();
-  }
+  if (storage != nullptr)
+    this->load_from_storage_(storage);
 }
 
 void StatsStore::update_today(const std::string &today_json) { this->today_json_ = today_json; }
@@ -72,17 +462,6 @@ bool StatsStore::finish_day(const std::string &finished_day_json, const std::str
   return this->persist_();
 }
 
-bool StatsStore::replace_json(const std::string &json) {
-  this->today_json_ = extract_object_(json, "today");
-  this->daily_ = extract_object_array_(json, "daily");
-  const std::string heatmap = extract_object_(json, "heatmap");
-  decode_heatmap_rle_(extract_string_(heatmap, "today"), &this->today_heatmap_cells_);
-  this->heatmap_daily_ = extract_object_array_(heatmap, "daily");
-  this->trim_daily_();
-  this->trim_heatmap_daily_();
-  return this->persist_();
-}
-
 void StatsStore::clear() {
   this->today_json_.clear();
   this->daily_.clear();
@@ -90,7 +469,10 @@ void StatsStore::clear() {
   this->heatmap_daily_.clear();
 }
 
-std::string StatsStore::current_json() const {
+bool StatsStore::write_json_(bool (*write)(void *context, const char *data, size_t size), void *context) const {
+  if (write == nullptr)
+    return false;
+
   const std::string today = this->today_json_.empty()
                                 ? "{\"d\":0,\"f\":0,\"r\":0,\"fz\":[0,0,0,0],\"rz\":[0,0,0,0],\"sz\":[0,0,0,0,0,0]}"
                                 : this->today_json_;
@@ -116,116 +498,65 @@ std::string StatsStore::current_json() const {
     return totals_json_(result, days);
   };
 
-  std::string json = "{\"version\":1,\"today\":";
-  json += today;
-  json += ",\"daily\":[";
+  auto write_cstr = [&](const char *value) -> bool { return write(context, value, std::strlen(value)); };
+  auto write_string = [&](const std::string &value) -> bool { return write(context, value.data(), value.size()); };
+
+  if (!write_cstr("{\"version\":1,\"today\":") || !write_string(today) || !write_cstr(",\"daily\":["))
+    return false;
   for (size_t index = 0; index < this->daily_.size(); index++) {
-    if (index > 0)
-      json += ",";
-    json += this->daily_[index];
+    if (index > 0 && !write_cstr(","))
+      return false;
+    if (!write_string(this->daily_[index]))
+      return false;
   }
-  json += "],\"summary\":{\"last3Days\":";
-  json += build_summary(3);
-  json += ",\"last7Days\":";
-  json += build_summary(7);
-  json += ",\"last15Days\":";
-  json += build_summary(15);
-  json += ",\"last30Days\":";
-  json += build_summary(30);
-  json += "},\"heatmap\":";
-  json += "{\"version\":1,\"cols\":33,\"rows\":26,\"cellMm\":300,\"encoding\":\"rle\",\"today\":";
-  json += json_string_(this->compact_today_heatmap_rle_());
-  json += ",\"daily\":[";
+  if (!write_cstr("],\"summary\":{\"last3Days\":") || !write_string(build_summary(3)) ||
+      !write_cstr(",\"last7Days\":") || !write_string(build_summary(7)) ||
+      !write_cstr(",\"last15Days\":") || !write_string(build_summary(15)) ||
+      !write_cstr(",\"last30Days\":") || !write_string(build_summary(30)) ||
+      !write_cstr("},\"heatmap\":{\"version\":1,\"cols\":33,\"rows\":26,\"cellMm\":300,\"encoding\":\"rle\","
+                  "\"today\":") ||
+      !write_string(json_string_(this->compact_today_heatmap_rle_())) || !write_cstr(",\"daily\":["))
+    return false;
   for (size_t index = 0; index < this->heatmap_daily_.size(); index++) {
-    if (index > 0)
-      json += ",";
-    json += this->heatmap_daily_[index];
+    if (index > 0 && !write_cstr(","))
+      return false;
+    if (!write_string(this->heatmap_daily_[index]))
+      return false;
   }
-  json += "]}";
-  json += "}";
-  return json;
+  return write_cstr("]}}");
 }
 
-std::vector<std::string> StatsStore::extract_object_array_(const std::string &json, const char *key) {
-  std::vector<std::string> objects;
-  const std::string marker = std::string("\"") + key + "\":[";
-  const size_t start = json.find(marker);
-  if (start == std::string::npos)
-    return objects;
-
-  size_t pos = start + marker.size();
-  int depth = 0;
-  size_t object_start = std::string::npos;
-  for (; pos < json.size(); pos++) {
-    const char ch = json[pos];
-    if (ch == '{') {
-      if (depth == 0)
-        object_start = pos;
-      depth++;
-    } else if (ch == '}') {
-      if (depth > 0)
-        depth--;
-      if (depth == 0 && object_start != std::string::npos) {
-        objects.push_back(json.substr(object_start, pos - object_start + 1));
-        object_start = std::string::npos;
-      }
-    } else if (ch == ']' && depth == 0) {
-      break;
-    }
-  }
-  return objects;
+bool StatsStore::stream_json(httpd_req *request) const {
+  if (request == nullptr)
+    return false;
+  HttpJsonContext context{request};
+  return this->write_json_(http_json_write, &context) && httpd_resp_send_chunk(request, nullptr, 0) == ESP_OK;
 }
 
-std::string StatsStore::extract_object_(const std::string &json, const char *key) {
-  const std::string marker = std::string("\"") + key + "\":";
-  size_t pos = json.find(marker);
-  if (pos == std::string::npos)
-    return "";
-  pos += marker.size();
-  while (pos < json.size() && json[pos] != '{')
-    pos++;
-  if (pos >= json.size())
-    return "";
+bool StatsStore::load_from_storage_(RadarStorage *storage) {
+  if (storage == nullptr)
+    return false;
 
-  const size_t object_start = pos;
-  int depth = 0;
-  for (; pos < json.size(); pos++) {
-    if (json[pos] == '{') {
-      depth++;
-    } else if (json[pos] == '}') {
-      depth--;
-      if (depth == 0)
-        return json.substr(object_start, pos - object_start + 1);
-    }
-  }
-  return "";
-}
+  uint32_t payload_offset = 0;
+  uint32_t payload_size = 0;
+  if (!storage->payload_info(RadarPayloadTarget::STATS, &payload_offset, &payload_size))
+    return false;
 
-std::string StatsStore::extract_string_(const std::string &json, const char *key) {
-  const std::string marker = std::string("\"") + key + "\":";
-  size_t pos = json.find(marker);
-  if (pos == std::string::npos)
-    return "";
-  pos += marker.size();
-  while (pos < json.size() && json[pos] != '"')
-    pos++;
-  if (pos >= json.size())
-    return "";
-  pos++;
+  StorageJsonReader reader(storage, payload_offset, payload_size);
+  StatsJsonParts parts;
+  if (!parse_stats_document(&reader, &parts))
+    return false;
 
-  std::string value;
-  for (; pos < json.size(); pos++) {
-    const char ch = json[pos];
-    if (ch == '"')
-      return value;
-    if (ch == '\\' && pos + 1 < json.size()) {
-      pos++;
-      value += json[pos];
-    } else {
-      value += ch;
-    }
-  }
-  return "";
+  std::array<uint16_t, 858> heatmap_cells{};
+  decode_heatmap_rle_(parts.heatmap_today, &heatmap_cells);
+
+  this->today_json_ = parts.today;
+  this->daily_ = parts.daily;
+  this->today_heatmap_cells_ = heatmap_cells;
+  this->heatmap_daily_ = parts.heatmap_daily;
+  this->trim_daily_();
+  this->trim_heatmap_daily_();
+  return true;
 }
 
 int StatsStore::parse_int_after_(const std::string &json, const char *key) {
@@ -437,9 +768,21 @@ void StatsStore::trim_heatmap_daily_() {
 bool StatsStore::persist_() const {
   if (this->storage_ == nullptr)
     return false;
-  const std::string json = this->current_json();
-  return this->storage_->write_payload(RadarPayloadTarget::STATS, reinterpret_cast<const uint8_t *>(json.data()),
-                                       json.size());
+
+  CountJsonContext count_context;
+  if (!this->write_json_(count_json_write, &count_context) || count_context.size == 0)
+    return false;
+
+  if (!this->storage_->start_upload(RadarPayloadTarget::STATS, count_context.size, STATS_INTERNAL_UPLOAD_SESSION))
+    return false;
+
+  StorageJsonContext storage_context{this->storage_, STATS_INTERNAL_UPLOAD_SESSION};
+  if (!this->write_json_(storage_json_write, &storage_context))
+    return false;
+  if (!flush_storage_json(&storage_context))
+    return false;
+
+  return this->storage_->commit_upload(RadarPayloadTarget::STATS, STATS_INTERNAL_UPLOAD_SESSION);
 }
 
 }  // namespace radar_api_server

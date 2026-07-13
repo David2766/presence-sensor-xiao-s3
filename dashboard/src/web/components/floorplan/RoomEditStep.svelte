@@ -2,6 +2,7 @@
   import FloorplanCandidateList from "../FloorplanCandidateList.svelte";
 
   let {
+    messages,
     candidates = [],
     selectedCandidateId = "",
     roomSplitDraft = { active: false, candidateId: "", points: [] },
@@ -27,6 +28,7 @@
 </script>
 
 <FloorplanCandidateList
+  {messages}
   mode="edit"
   candidates={candidates}
   selectedCandidateId={selectedCandidateId}

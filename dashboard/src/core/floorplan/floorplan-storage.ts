@@ -1,4 +1,4 @@
-import type { RoomCandidate } from "./floorplan-types";
+import type { FloorplanWallSegment, RoomCandidate } from "./floorplan-types";
 
 export const FLOORPLAN_STORAGE_VERSION = 1;
 export const FLOORPLAN_IMAGE_PATH = "/floorplan.webp";
@@ -41,9 +41,12 @@ export interface FloorplanStorageOcclusion {
   ignoredEdges: string[];
 }
 
+export type FloorplanStorageWallSegment = FloorplanWallSegment;
+
 export interface FloorplanStorageObject {
   id: string;
   asset: string;
+  roomId?: string;
   xPx: number;
   yPx: number;
   widthPx: number;
@@ -57,6 +60,7 @@ export interface FloorplanStorageDocument {
   scale: FloorplanStorageScale;
   radar: FloorplanStorageRadar;
   rooms: FloorplanStorageRoom[];
+  wallSegments?: FloorplanStorageWallSegment[];
   occlusion: FloorplanStorageOcclusion;
   objects?: FloorplanStorageObject[];
 }
@@ -89,6 +93,7 @@ export interface FloorplanStorageBuildInput {
     scale: number;
   };
   rooms: RoomCandidate[];
+  wallSegments?: FloorplanWallSegment[];
   roomMeasurements?: Record<string, { width?: string; height?: string }>;
   roomSizeEstimates?: Record<string, { widthMm?: number; heightMm?: number; manuallyEdited?: boolean }>;
   ignoredOcclusionEdges?: string[];
@@ -126,18 +131,32 @@ export function buildFloorplanStorageDocument(input: FloorplanStorageBuildInput)
     rooms: input.rooms
       .filter((room) => room.status !== "rejected")
       .map((room) => storageRoomFromCandidate(room, input.roomMeasurements ?? {}, input.roomSizeEstimates ?? {})),
+    wallSegments: (input.wallSegments ?? []).map(storageWallSegmentFromSegment),
     occlusion: {
       ignoredEdges: [...new Set(input.ignoredOcclusionEdges ?? [])]
     },
     objects: (input.objects ?? []).map((object) => ({
       id: object.id,
       asset: object.asset,
+      roomId: object.roomId,
       xPx: roundPoint(object.xPx),
       yPx: roundPoint(object.yPx),
       widthPx: roundPoint(object.widthPx),
       heightPx: roundPoint(object.heightPx),
       rotationDeg: roundPoint(object.rotationDeg)
     }))
+  };
+}
+
+function storageWallSegmentFromSegment(segment: FloorplanWallSegment): FloorplanStorageWallSegment {
+  return {
+    id: segment.id,
+    axis: segment.axis,
+    x1: roundPoint(segment.x1),
+    y1: roundPoint(segment.y1),
+    x2: roundPoint(segment.x2),
+    y2: roundPoint(segment.y2),
+    length: roundPoint(segment.length)
   };
 }
 

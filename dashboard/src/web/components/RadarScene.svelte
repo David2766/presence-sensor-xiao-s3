@@ -8,9 +8,12 @@
     RADAR_SCENE_WIDTH,
     radarSceneViewport
   } from "../canvas/radar-view";
+  import type { Messages } from "../i18n/types";
   import type { WebDeviceConfig, WebDeviceState, WebTarget, WebZone } from "../types";
+  import { exitLineFromZone } from "../zone-geometry";
 
   interface Props {
+    messages: Messages;
     state: WebDeviceState | null;
     config: WebDeviceConfig | null;
     selectedZoneId?: string;
@@ -25,6 +28,7 @@
   }
 
   let {
+    messages,
     state,
     config,
     selectedZoneId = "",
@@ -39,6 +43,7 @@
   }: Props = $props();
 
   const viewport = $derived(radarSceneViewport());
+  const text = $derived(messages.zones);
   const centerX = RADAR_SCENE_WIDTH / 2;
   const bottomY = RADAR_SCENE_HEIGHT - RADAR_SCENE_PAD;
 
@@ -63,6 +68,14 @@
     return zone.points.map(([x, y]) => screenPoint(x, y));
   }
 
+  function exitLineScreenPoints(zone: WebZone) {
+    const line = exitLineFromZone(zone);
+    return {
+      start: screenPoint(line.start[0], line.start[1]),
+      end: screenPoint(line.end[0], line.end[1])
+    };
+  }
+
   function zoneClasses(zone: WebZone, calibration = false): string {
     return [
       "web-zone",
@@ -77,7 +90,27 @@
 
   function zoneLabel(zoneId: string): string {
     const match = /^zone_(\d+)$/.exec(zoneId);
-    return match ? `구역 ${match[1]}` : zoneId;
+    return match ? text.zoneLabel(match[1]) : zoneId;
+  }
+
+  function defaultZoneNameIndex(name: string): string | null {
+    const match = /^(?:구역|Zone)\s*(\d+)$/.exec(name.trim());
+    return match?.[1] ?? null;
+  }
+
+  function defaultCalibrationNameIndex(name: string): string | null {
+    const match = /^(?:보정 구역|Correction zone)\s*(\d+)$/.exec(name.trim());
+    return match?.[1] ?? null;
+  }
+
+  function displayZoneName(zone: WebZone): string {
+    const name = zone.name?.trim() ?? "";
+    if (!name) return "";
+    const defaultZoneIndex = defaultZoneNameIndex(name);
+    if (defaultZoneIndex) return text.zoneLabel(defaultZoneIndex);
+    const defaultCalibrationIndex = defaultCalibrationNameIndex(name);
+    if (defaultCalibrationIndex) return text.calibrationZoneLabel(defaultCalibrationIndex);
+    return name;
   }
 
   function targetScreenPoint(target: WebTarget) {
@@ -119,7 +152,7 @@
     class="radar-scene"
     viewBox={`0 0 ${RADAR_SCENE_WIDTH} ${RADAR_SCENE_HEIGHT}`}
     role="img"
-    aria-label="Radar map"
+    aria-label={text.radarAria}
   >
     <rect
       class="radar-scene-hit"
@@ -129,7 +162,7 @@
       height={RADAR_SCENE_HEIGHT}
       role="button"
       tabindex="0"
-      aria-label="레이더 선택 해제"
+      aria-label={text.clearSelectionAria}
       onclick={(event) => onCanvasClick?.(event)}
       onkeydown={stopKey}
     />
@@ -146,14 +179,14 @@
             data-calibration-info={zone.id}
             role="button"
             tabindex="0"
-            aria-label="보정 구역 정보"
+            aria-label={text.calibrationInfoAria}
             onclick={() => onCalibrationInfoClick?.(zone.id)}
             onkeydown={stopKey}
           ></polygon>
           <text x={labelPoint.x + 8} y={labelPoint.y - 8}>
             <tspan x={labelPoint.x + 8} dy="0">{zoneLabel(zone.id)}</tspan>
-            {#if !zone.placeholder && zone.name}
-              <tspan x={labelPoint.x + 8} dy="14">{zone.name}</tspan>
+            {#if !zone.placeholder && displayZoneName(zone)}
+              <tspan x={labelPoint.x + 8} dy="14">{displayZoneName(zone)}</tspan>
             {/if}
           </text>
           {#if editable && zone.id === selectedZoneId}
@@ -169,7 +202,7 @@
                 data-zone-point={index}
                 role="button"
                 tabindex="0"
-                aria-label="보정 구역 꼭짓점"
+                aria-label={text.calibrationPointAria}
                 onpointerdown={(event) => onZonePointerDown?.(event)}
                 ondblclick={(event) => onZonePointDoubleClick?.(event)}
                 onkeydown={stopKey}
@@ -183,19 +216,51 @@
     {#each config.zones as zone (zone.id)}
       {#if zone.points.length && (!zone.placeholder || zone.id === selectedZoneId)}
         {@const points = zoneScreenPoints(zone)}
+        {@const exitLine = zone.type === "exit" ? exitLineScreenPoints(zone) : null}
         {@const labelPoint = points[0]}
         <g class={zoneClasses(zone)}>
-          <polygon
-            points={zonePoints(zone)}
-            data-zone-drag={editable ? "move" : undefined}
-            data-zone-id={zone.id}
-            role="button"
-            tabindex="0"
-            aria-label="구역 이동"
-            onpointerdown={(event) => onZonePointerDown?.(event)}
-            onkeydown={stopKey}
-          ></polygon>
-          {#if editable && zone.id === selectedZoneId}
+          {#if exitLine}
+            <line
+              class="exit-line-display"
+              x1={exitLine.start.x}
+              y1={exitLine.start.y}
+              x2={exitLine.end.x}
+              y2={exitLine.end.y}
+              data-zone-drag={editable ? "move" : undefined}
+              data-zone-id={zone.id}
+              role="button"
+              tabindex="0"
+              aria-label={text.zoneMoveAria}
+              onpointerdown={(event) => onZonePointerDown?.(event)}
+              onkeydown={stopKey}
+            />
+            <line
+              class="exit-line-hit"
+              x1={exitLine.start.x}
+              y1={exitLine.start.y}
+              x2={exitLine.end.x}
+              y2={exitLine.end.y}
+              data-zone-drag={editable ? "move" : undefined}
+              data-zone-id={zone.id}
+              role="button"
+              tabindex="0"
+              aria-label={text.zoneMoveAria}
+              onpointerdown={(event) => onZonePointerDown?.(event)}
+              onkeydown={stopKey}
+            />
+          {:else}
+            <polygon
+              points={zonePoints(zone)}
+              data-zone-drag={editable ? "move" : undefined}
+              data-zone-id={zone.id}
+              role="button"
+              tabindex="0"
+              aria-label={text.zoneMoveAria}
+              onpointerdown={(event) => onZonePointerDown?.(event)}
+              onkeydown={stopKey}
+            ></polygon>
+          {/if}
+          {#if editable && zone.id === selectedZoneId && !exitLine}
             {#each points as point, index}
               {@const next = points[(index + 1) % points.length]}
               <line
@@ -208,19 +273,50 @@
                 data-zone-edge={index}
                 role="button"
                 tabindex="0"
-                aria-label="구역 꼭짓점 추가"
+                aria-label={text.zoneEdgeAddAria}
                 onclick={(event) => onZoneEdgeClick?.(event)}
                 onkeydown={stopKey}
               />
             {/each}
           {/if}
-          <text x={labelPoint.x + 8} y={labelPoint.y - 8}>
-            <tspan x={labelPoint.x + 8} dy="0">{zoneLabel(zone.id)}</tspan>
-            {#if !zone.placeholder && zone.name}
-              <tspan x={labelPoint.x + 8} dy="14">{zone.name}</tspan>
+          <text x={(exitLine?.start.x ?? labelPoint.x) + 8} y={(exitLine?.start.y ?? labelPoint.y) - 8}>
+            <tspan x={(exitLine?.start.x ?? labelPoint.x) + 8} dy="0">{zoneLabel(zone.id)}</tspan>
+            {#if !zone.placeholder && displayZoneName(zone)}
+              <tspan x={(exitLine?.start.x ?? labelPoint.x) + 8} dy="14">{displayZoneName(zone)}</tspan>
             {/if}
           </text>
-          {#if editable && zone.id === selectedZoneId}
+          {#if editable && zone.id === selectedZoneId && exitLine}
+            <circle
+              class:selected={selectedPointIndex === 0}
+              class="zone-handle exit-line-handle"
+              cx={exitLine.start.x}
+              cy={exitLine.start.y}
+              r="8"
+              data-zone-drag="resize"
+              data-zone-id={zone.id}
+              data-zone-point={0}
+              role="button"
+              tabindex="0"
+              aria-label={text.zonePointAria}
+              onpointerdown={(event) => onZonePointerDown?.(event)}
+              onkeydown={stopKey}
+            />
+            <circle
+              class:selected={selectedPointIndex === 1}
+              class="zone-handle exit-line-handle"
+              cx={exitLine.end.x}
+              cy={exitLine.end.y}
+              r="8"
+              data-zone-drag="resize"
+              data-zone-id={zone.id}
+              data-zone-point={1}
+              role="button"
+              tabindex="0"
+              aria-label={text.zonePointAria}
+              onpointerdown={(event) => onZonePointerDown?.(event)}
+              onkeydown={stopKey}
+            />
+          {:else if editable && zone.id === selectedZoneId}
             {#each points as point, index}
               <circle
                 class:selected={index === selectedPointIndex}
@@ -233,7 +329,7 @@
                 data-zone-point={index}
                 role="button"
                 tabindex="0"
-                aria-label="구역 꼭짓점"
+                aria-label={text.zonePointAria}
                 onpointerdown={(event) => onZonePointerDown?.(event)}
                 ondblclick={(event) => onZonePointDoubleClick?.(event)}
                 onkeydown={stopKey}
@@ -268,7 +364,7 @@
   </svg>
 {:else}
   <div class="svelte-shell-placeholder">
-    <strong>레이더 화면 준비 중</strong>
-    <span>상태 데이터를 기다리는 중입니다.</span>
+    <strong>{text.sceneLoadingTitle}</strong>
+    <span>{text.sceneLoadingDescription}</span>
   </div>
 {/if}

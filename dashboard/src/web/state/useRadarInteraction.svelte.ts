@@ -2,12 +2,16 @@ import { boundsFromPoints, rectPoints } from "../../core/geometry";
 import type { RadarScreenPoint } from "../../core/types";
 import { clampZoneToHardwareBounds, isCalibrationZoneId } from "../../core/zones";
 import { radarPointFromEvent } from "../canvas/radar-view";
+import { zoneGeometryMessage } from "../i18n/zone-geometry";
+import type { Messages } from "../i18n/types";
 import type { WebDeviceConfig, WebZone } from "../types";
 import {
   convertZoneToRectInConfig,
   deleteZonePointInConfig,
   insertZonePointInConfig,
   moveZone,
+  moveExitLineZone,
+  updateExitLineEndpoint,
   updateZonePoint
 } from "../zone-geometry";
 
@@ -39,6 +43,7 @@ interface RadarInteractionOptions {
   getCalibrationZones: () => WebZone[];
   getSelectedZone: () => WebZone | null;
   getSelectedPointIndex: () => number;
+  getMessages: () => Messages;
   setSelectedPointIndex: (pointIndex: number) => void;
   updateConfig: (mutator: (current: WebDeviceConfig) => WebDeviceConfig, save?: boolean, history?: boolean) => void;
   pushHistory: () => void;
@@ -59,6 +64,7 @@ export function createRadarInteraction({
   getCalibrationZones,
   getSelectedZone,
   getSelectedPointIndex,
+  getMessages,
   setSelectedPointIndex,
   updateConfig,
   pushHistory,
@@ -146,6 +152,10 @@ export function createRadarInteraction({
     const nextZone =
       drag.source === "calibration"
         ? resizeCalibrationZone(drag.startZone, drag.pointIndex, point, Boolean(drag.startZone.minSizeUnlocked))
+        : drag.startZone.type === "exit"
+          ? drag.mode === "move"
+            ? moveExitLineZone(drag.startZone, drag.startPoint, point)
+            : updateExitLineEndpoint(drag.startZone, drag.pointIndex, point)
         : drag.mode === "move"
           ? moveZone(drag.startZone, drag.startPoint, point)
           : updateZonePoint(drag.startZone, drag.pointIndex, point);
@@ -267,7 +277,8 @@ export function createRadarInteraction({
     let nextPointIndex = -1;
     updateConfig((current) => {
       const result = insertZonePointInConfig(current, zoneId, edgeIndex, point);
-      if (!result.changed && result.message) setStatus(result.message, "error");
+      const message = zoneGeometryMessage(getMessages(), result.messageCode, result.messageParams);
+      if (!result.changed && message) setStatus(message, "error");
       nextPointIndex = result.selectedPointIndex ?? -1;
       return result.config;
     });
@@ -286,11 +297,13 @@ export function createRadarInteraction({
     const selectedZone = getSelectedZone();
     const selectedPointIndex = getSelectedPointIndex();
     if (!selectedZone) return;
+    if (selectedZone.type === "exit") return;
     if (selectedPointIndex < 0) return;
     let nextPointIndex = selectedPointIndex;
     updateConfig((current) => {
       const result = deleteZonePointInConfig(current, selectedZone.id, selectedPointIndex);
-      if (!result.changed && result.message) setStatus(result.message, "warn");
+      const message = zoneGeometryMessage(getMessages(), result.messageCode, result.messageParams);
+      if (!result.changed && message) setStatus(message, "warn");
       nextPointIndex = result.selectedPointIndex ?? nextPointIndex;
       return result.config;
     });

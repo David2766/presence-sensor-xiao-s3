@@ -1,4 +1,12 @@
 <script>
+  import {
+    clampFurnitureObjectToBounds,
+    constrainFurnitureObjectToRooms,
+    furnitureCenter,
+    isFurnitureObjectInsideRoom,
+    resizeFurnitureObjectFromCorner
+  } from "../floorplan/floorplan-furniture";
+
   let {
     objects = [],
     assets = [],
@@ -6,12 +14,14 @@
     imageWidth = 1,
     imageHeight = 1,
     bounds = null,
+    rooms = [],
     editable = false,
     onSelect,
-    onMove
+    onCommit
   } = $props();
 
-  let drag = null;
+  let drag = $state(null);
+  let draftObject = $state(null);
   const MIN_OBJECT_SIZE_PX = 18;
   const ROTATE_HANDLE_OFFSET_PX = 22;
 
@@ -19,11 +29,13 @@
     return assets.find((asset) => asset.id === id) ?? null;
   }
 
-  function objectCenter(object) {
-    return {
-      x: object.xPx + object.widthPx / 2,
-      y: object.yPx + object.heightPx / 2
-    };
+  function renderableObjects() {
+    return (objects ?? []).filter((object) =>
+      object &&
+      typeof object === "object" &&
+      typeof object.id === "string" &&
+      typeof object.asset === "string"
+    );
   }
 
   function pointerPoint(event) {
@@ -35,16 +47,35 @@
     };
   }
 
-  function clampObject(object, x, y, width = object.widthPx, height = object.heightPx) {
+  function constrainObject(proposed, previous) {
     const limit = bounds ?? { x: 0, y: 0, width: imageWidth, height: imageHeight };
-    const safeWidth = Math.min(Math.max(MIN_OBJECT_SIZE_PX, width), limit.width);
-    const safeHeight = Math.min(Math.max(MIN_OBJECT_SIZE_PX, height), limit.height);
-    return {
-      xPx: Math.max(limit.x, Math.min(limit.x + limit.width - safeWidth, x)),
-      yPx: Math.max(limit.y, Math.min(limit.y + limit.height - safeHeight, y)),
-      widthPx: safeWidth,
-      heightPx: safeHeight
+    const safeProposed = {
+      ...proposed,
+      widthPx: Math.max(MIN_OBJECT_SIZE_PX, proposed.widthPx),
+      heightPx: Math.max(MIN_OBJECT_SIZE_PX, proposed.heightPx)
     };
+    if (drag?.constraintSuspended) {
+      if (objectInsideAssignedRoom(safeProposed)) {
+        drag = { ...drag, constraintSuspended: false };
+        return constrainFurnitureObjectToRooms(safeProposed, previous, rooms, limit);
+      }
+      return clampFurnitureObjectToBounds(safeProposed, limit);
+    }
+    return constrainFurnitureObjectToRooms(safeProposed, previous, rooms, limit);
+  }
+
+  function objectInsideAssignedRoom(object) {
+    const assignedRoom = rooms.find((room) => room.id === object.roomId);
+    if (assignedRoom) return isFurnitureObjectInsideRoom(object, assignedRoom);
+    return rooms.some((room) => isFurnitureObjectInsideRoom(object, room));
+  }
+
+  function moveObject(object, x, y) {
+    return constrainObject({
+      ...object,
+      xPx: x,
+      yPx: y
+    }, draftObject ?? object);
   }
 
   function beginDrag(event, object) {
@@ -56,11 +87,14 @@
     drag = {
       mode: "move",
       id: object.id,
+      object: { ...object },
       offsetX: point.x - object.xPx,
       offsetY: point.y - object.yPx,
       pointerId: event.pointerId,
-      target: event.currentTarget
+      target: event.currentTarget,
+      constraintSuspended: rooms.length > 0 && !objectInsideAssignedRoom(object)
     };
+    draftObject = { ...object };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
@@ -74,12 +108,11 @@
       mode: "resize",
       id: object.id,
       corner,
-      startX: point.x,
-      startY: point.y,
       object: { ...object },
       pointerId: event.pointerId,
       target: event.currentTarget
     };
+    draftObject = { ...object };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
@@ -92,26 +125,32 @@
     drag = {
       mode: "rotate",
       id: object.id,
-      center: objectCenter(object),
-      startAngle: angleForPoint(objectCenter(object), point),
+      center: furnitureCenter(object),
+      startAngle: angleForPoint(furnitureCenter(object), point),
       startRotation: object.rotationDeg ?? 0,
       pointerId: event.pointerId,
       target: event.currentTarget
     };
+    draftObject = { ...object };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
   function updateDrag(event) {
     if (!drag) return;
-    const object = objects.find((item) => item.id === drag.id);
+    const object = draftObject ?? objects.find((item) => item.id === drag.id);
     if (!object) return;
     const point = pointerPoint(event);
     if (drag.mode === "rotate") {
-      onMove?.(object.id, rotateObject(point));
+      draftObject = constrainObject({ ...object, ...rotateObject(point) }, object);
     } else if (drag.mode === "resize") {
-      onMove?.(object.id, resizeObject(point));
+      draftObject = resizeObject(point);
     } else {
-      onMove?.(object.id, clampObject(object, point.x - drag.offsetX, point.y - drag.offsetY));
+      draftObject = moveObject(object, point.x - drag.offsetX, point.y - drag.offsetY);
+      drag = {
+        ...drag,
+        offsetX: point.x - draftObject.xPx,
+        offsetY: point.y - draftObject.yPx
+      };
     }
   }
 
@@ -127,41 +166,18 @@
   }
 
   function resizeObject(point) {
-    const original = drag.object;
-    const dx = point.x - drag.startX;
-    const dy = point.y - drag.startY;
-    let x = original.xPx;
-    let y = original.yPx;
-    let width = original.widthPx;
-    let height = original.heightPx;
-
-    if (drag.corner.includes("e")) width = original.widthPx + dx;
-    if (drag.corner.includes("s")) height = original.heightPx + dy;
-    if (drag.corner.includes("w")) {
-      x = original.xPx + dx;
-      width = original.widthPx - dx;
-    }
-    if (drag.corner.includes("n")) {
-      y = original.yPx + dy;
-      height = original.heightPx - dy;
-    }
-
-    if (width < MIN_OBJECT_SIZE_PX) {
-      if (drag.corner.includes("w")) x -= MIN_OBJECT_SIZE_PX - width;
-      width = MIN_OBJECT_SIZE_PX;
-    }
-    if (height < MIN_OBJECT_SIZE_PX) {
-      if (drag.corner.includes("n")) y -= MIN_OBJECT_SIZE_PX - height;
-      height = MIN_OBJECT_SIZE_PX;
-    }
-
-    return clampObject(original, x, y, width, height);
+    const resized = resizeFurnitureObjectFromCorner(drag.object, drag.corner, point, MIN_OBJECT_SIZE_PX);
+    return constrainObject(resized, draftObject ?? drag.object);
   }
 
   function endDrag() {
     if (!drag) return;
+    const finishedDrag = drag;
+    const finalObject = draftObject;
     drag.target?.releasePointerCapture?.(drag.pointerId);
     drag = null;
+    draftObject = null;
+    if (finalObject) onCommit?.(finishedDrag.id, finalObject);
   }
 
   function handleKeydown(event, object) {
@@ -198,10 +214,11 @@
   onpointerup={endDrag}
   onpointercancel={endDrag}
 >
-  {#each objects as object (object.id)}
-    {@const asset = assetFor(object.asset)}
+  {#each renderableObjects() as sourceObject (sourceObject.id)}
+      {@const object = draftObject?.id === sourceObject.id ? draftObject : sourceObject}
+      {@const asset = assetFor(object.asset)}
     {#if asset}
-      {@const center = objectCenter(object)}
+      {@const center = furnitureCenter(object)}
       <g
         class={`floorplan-furniture-object ${selectedObjectId === object.id ? "selected" : ""}`}
         transform={`rotate(${object.rotationDeg ?? 0} ${center.x} ${center.y})`}
@@ -225,7 +242,7 @@
           y={object.yPx}
           width={object.widthPx}
           height={object.heightPx}
-          preserveAspectRatio="xMidYMid meet"
+          preserveAspectRatio="none"
         />
         {#if selectedObjectId === object.id}
           <rect

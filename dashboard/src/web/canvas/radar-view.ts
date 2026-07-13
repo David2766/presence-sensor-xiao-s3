@@ -25,10 +25,25 @@ export function radarPointFromEvent(event: PointerEvent | MouseEvent, svg: SVGSV
   const screenY = ((event.clientY - rect.top) / rect.height) * RADAR_SCENE_HEIGHT;
   const viewport = radarSceneViewport();
   const point = toRadarPoint(screenX, screenY, viewport);
+  return clampRadarEditPoint(point, viewport);
+}
+
+export function clampRadarEditPoint(
+  point: RadarScreenPoint,
+  bounds: Pick<RadarViewport, "rangeX" | "rangeY">
+): RadarScreenPoint {
   return {
-    x: clamp(Math.round(point.x), -viewport.rangeX, viewport.rangeX),
-    y: clamp(Math.round(point.y), 0, viewport.rangeY)
+    x: clamp(Math.round(point.x), -bounds.rangeX, bounds.rangeX),
+    y: clamp(Math.round(point.y), 0, bounds.rangeY)
   };
+}
+
+export function clampRadarEditZonePoint(
+  point: [number, number],
+  bounds: Pick<RadarViewport, "rangeX" | "rangeY">
+): [number, number] {
+  const clamped = clampRadarEditPoint({ x: point[0], y: point[1] }, bounds);
+  return [clamped.x, clamped.y];
 }
 
 function clamp(value: number, min: number, max: number): number {

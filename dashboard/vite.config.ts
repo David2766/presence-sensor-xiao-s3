@@ -1,59 +1,56 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
-export default defineConfig(({ mode }) => {
-  if (mode === "demo") {
-    return {
-      base: "/presence-sensor-xiao-s3/",
-      plugins: [svelte()],
-      build: {
-        outDir: "dist-demo",
-        emptyOutDir: true,
-        sourcemap: true,
-        rollupOptions: {
-          input: "index.html",
-          output: {
-            entryFileNames: "assets/dashboard.js",
-            chunkFileNames: "assets/dashboard-[name].js",
-            assetFileNames: (assetInfo) => {
-              if (assetInfo.name?.endsWith(".css")) {
-                return "assets/dashboard.css";
-              }
-              return "assets/[name][extname]";
+function appEntryForMode(mode: string): string {
+  return mode === "demo" ? "/src/web/DemoShell.svelte" : "/src/web/App.svelte";
+}
+
+function dashboardBuildConfig(mode: string, base: string, outDir: string) {
+  return {
+    base,
+    plugins: [svelte()],
+    resolve: {
+      alias: {
+        "@app-entry": appEntryForMode(mode)
+      }
+    },
+    build: {
+      outDir,
+      emptyOutDir: true,
+      sourcemap: true,
+      rollupOptions: {
+        input: "index.html",
+        output: {
+          entryFileNames: "assets/dashboard.js",
+          chunkFileNames: "assets/dashboard-[name].js",
+          assetFileNames: (assetInfo: { name?: string }) => {
+            if (assetInfo.name?.endsWith(".css")) {
+              return "assets/dashboard.css";
             }
+            return "assets/[name][extname]";
           }
         }
       }
-    };
+    }
+  };
+}
+
+export default defineConfig(({ mode }) => {
+  if (mode === "demo") {
+    return dashboardBuildConfig(mode, "/presence-sensor-xiao-s3/", "dist-demo");
   }
 
   if (mode === "web") {
-    return {
-      base: "/dashboard/",
-      plugins: [svelte()],
-      build: {
-        outDir: "dist-web",
-        emptyOutDir: true,
-        sourcemap: true,
-        rollupOptions: {
-          input: "index.html",
-          output: {
-            entryFileNames: "assets/dashboard.js",
-            chunkFileNames: "assets/dashboard-[name].js",
-            assetFileNames: (assetInfo) => {
-              if (assetInfo.name?.endsWith(".css")) {
-                return "assets/dashboard.css";
-              }
-              return "assets/[name][extname]";
-            }
-          }
-        }
-      }
-    };
+    return dashboardBuildConfig(mode, "/dashboard/", "dist-web");
   }
 
   return {
     plugins: [svelte()],
+    resolve: {
+      alias: {
+        "@app-entry": appEntryForMode(mode)
+      }
+    },
     build: {
       outDir: "dist",
       emptyOutDir: false,

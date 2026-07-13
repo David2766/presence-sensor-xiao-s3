@@ -1,15 +1,22 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { apiErrorMessage } from "../api/api-message";
   import type { FloorplanStorageDocument } from "../../core/floorplan/floorplan-storage";
   import {
     loadFloorplanStorageDocument,
     loadFloorplanStorageImage,
     loadFloorplanStorageStatus
   } from "../floorplan/floorplan-storage-client";
+  import { buildBoundaryOcclusionSegments } from "../floorplan/floorplan-occlusion";
+  import { floorplanImageFrameStyle } from "../floorplan/floorplan-image-frame";
+  import { findRoomContainingPoint } from "../floorplan/floorplan-room-context";
+  import FloorplanImageFrame from "./floorplan/FloorplanImageFrame.svelte";
   import FloorplanRadarPlacementOverlay from "./FloorplanRadarPlacementOverlay.svelte";
   import DiagnosticDialog from "./DiagnosticDialog.svelte";
+  import type { Messages } from "../i18n";
   import RadarScene from "./RadarScene.svelte";
   import type { WebControlStatus, WebDeviceConfig, WebDeviceState, WebSystemStatus } from "../types";
+  import { formatCompactBytes } from "../utils/formatters";
 
   type TabTarget = "zones" | "floorplan" | "stats" | "backup";
   type IntegrationMode = "unknown" | "edge" | "ha";
@@ -26,6 +33,7 @@
     controlActionBusy: boolean;
     integrationMode: IntegrationMode;
     integrationModeActionBusy: boolean;
+    messages: Messages;
     updatedText: string;
     floorplanStorageBaseUrl: string;
     floorplanStorageFetcher?: typeof fetch;
@@ -33,6 +41,7 @@
     onSetStatusLed: (enabled: boolean) => void | Promise<void>;
     onSetLedBlinkDuration: (seconds: number) => void | Promise<void>;
     onSetEnvironmentCorrection: (enabled: boolean) => void | Promise<void>;
+    onSetLegacyPresenceFallback: (enabled: boolean) => void | Promise<void>;
     onSetTemperatureOffset: (value: number) => void | Promise<void>;
     onSetHumidityOffset: (value: number) => void | Promise<void>;
     onChangeIntegrationMode: () => void | Promise<void>;
@@ -50,6 +59,7 @@
     controlActionBusy,
     integrationMode,
     integrationModeActionBusy,
+    messages,
     updatedText,
     floorplanStorageBaseUrl,
     floorplanStorageFetcher,
@@ -57,6 +67,7 @@
     onSetStatusLed,
     onSetLedBlinkDuration,
     onSetEnvironmentCorrection,
+    onSetLegacyPresenceFallback,
     onSetTemperatureOffset,
     onSetHumidityOffset,
     onChangeIntegrationMode
@@ -79,12 +90,17 @@
   const filterZoneCount = $derived(config?.zones.filter((zone) => zone.type === "filter").length ?? 0);
   const reducedZoneCount = $derived(config?.zones.filter((zone) => zone.type === "reduced").length ?? 0);
   const disabledZoneCount = $derived(config?.zones.filter((zone) => zone.type === "disabled").length ?? 0);
+  const legacyPresenceFallback = $derived(config?.legacyPresenceFallback === true);
   const integrationModeButtonText = $derived(
-    integrationMode === "edge" ? "HA 모드로" : integrationMode === "ha" ? "Edge 모드로" : "사용 환경 선택"
+    integrationMode === "edge"
+      ? messages.dashboard.haMode
+      : integrationMode === "ha"
+        ? messages.dashboard.edgeMode
+        : messages.dashboard.chooseMode
   );
 
   function yesNo(value: boolean | undefined): string {
-    return value ? "감지됨" : "감지 없음";
+    return value ? messages.dashboard.detected : messages.dashboard.notDetected;
   }
 
   function formatNumber(value: number | null | undefined, suffix = ""): string {
@@ -103,14 +119,6 @@
     return formatNumber(value, " lux");
   }
 
-  function formatBytes(bytes: number | undefined): string {
-    if (!Number.isFinite(bytes)) return "-";
-    const value = Number(bytes);
-    if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)}MB`;
-    if (value >= 1024) return `${Math.round(value / 1024)}KB`;
-    return `${value}B`;
-  }
-
   function formatStoragePercent(used: number | null | undefined, total: number | null | undefined): string {
     if (!Number.isFinite(used ?? NaN) || !Number.isFinite(total ?? NaN) || Number(total) <= 0) return "-";
     return `${Math.round((Number(used) / Number(total)) * 100)}%`;
@@ -126,25 +134,27 @@
     const total = Math.max(0, Math.floor(Number(seconds)));
     const hours = Math.floor(total / 3600);
     const minutes = Math.floor((total % 3600) / 60);
-    if (hours > 0) return `${hours}시간 ${minutes}분`;
-    return `${minutes}분`;
+    if (hours > 0) return messages.dashboard.hoursMinutes(hours, minutes);
+    return messages.dashboard.minutes(minutes);
   }
 
   function wifiSignalInfo(connected: boolean | undefined, rssi: number | null | undefined): { bars: number; label: string } {
-    if (!connected || !Number.isFinite(rssi ?? NaN)) return { bars: 0, label: systemStatusLoading ? "확인 중" : "연결 안 됨" };
+    if (!connected || !Number.isFinite(rssi ?? NaN)) {
+      return { bars: 0, label: systemStatusLoading ? messages.dashboard.checking : messages.dashboard.notConnected };
+    }
     const value = Number(rssi);
-    if (value >= -50) return { bars: 4, label: "매우 좋음" };
-    if (value >= -60) return { bars: 3, label: "좋음" };
-    if (value >= -70) return { bars: 2, label: "보통" };
-    if (value >= -80) return { bars: 1, label: "약함" };
-    return { bars: 1, label: "매우 약함" };
+    if (value >= -50) return { bars: 4, label: messages.dashboard.wifiExcellent };
+    if (value >= -60) return { bars: 3, label: messages.dashboard.wifiGood };
+    if (value >= -70) return { bars: 2, label: messages.dashboard.wifiFair };
+    if (value >= -80) return { bars: 1, label: messages.dashboard.wifiWeak };
+    return { bars: 1, label: messages.dashboard.wifiVeryWeak };
   }
 
   function formatDuration(seconds: number | null | undefined): string {
     if (typeof seconds !== "number" || !Number.isFinite(seconds)) return "-";
-    if (seconds < 1) return "계속";
-    if (seconds >= 60) return `${Math.round(seconds / 60)}분`;
-    return `${Math.round(seconds)}초`;
+    if (seconds < 1) return messages.dashboard.always;
+    if (seconds >= 60) return messages.dashboard.minutes(Math.round(seconds / 60));
+    return messages.dashboard.seconds(Math.round(seconds));
   }
 
   function formatOffset(value: number | null | undefined, suffix: string): string {
@@ -185,7 +195,7 @@
       const status = await loadFloorplanStorageStatus({ baseUrl: floorplanStorageBaseUrl, fetcher: floorplanStorageFetcher });
       if (!status.hasConfig || !status.hasImage) {
         floorplanDocument = null;
-        floorplanError = "저장된 평면도 데이터가 없습니다.";
+        floorplanError = messages.dashboard.noSavedFloorplan;
         return;
       }
       const [document, image] = await Promise.all([
@@ -196,7 +206,7 @@
       floorplanDocument = document;
       floorplanImageUrl = URL.createObjectURL(image);
     } catch (error) {
-      floorplanError = error instanceof Error ? error.message : String(error);
+      floorplanError = apiErrorMessage(messages, error);
       floorplanDocument = null;
       if (floorplanImageUrl) URL.revokeObjectURL(floorplanImageUrl);
       floorplanImageUrl = "";
@@ -208,7 +218,7 @@
   function floorplanPreviewStyle(): string {
     const width = floorplanDocument?.image?.width ?? 1;
     const height = floorplanDocument?.image?.height ?? 1;
-    return `aspect-ratio:${width}/${height};`;
+    return floorplanImageFrameStyle(width, height, 62);
   }
 
   function roomPoints(points: Array<[number, number]>): string {
@@ -249,51 +259,25 @@
     };
   }
 
-  function wallSegmentGeometryKey(x1: number, y1: number, x2: number, y2: number): string {
-    const first = [Math.round(x1), Math.round(y1)];
-    const second = [Math.round(x2), Math.round(y2)];
-    const [start, end] =
-      first[0] < second[0] || (first[0] === second[0] && first[1] <= second[1]) ? [first, second] : [second, first];
-    return `wall:${start[0]},${start[1]}-${end[0]},${end[1]}`;
-  }
-
   function roomBoundarySegments() {
-    return (
-      floorplanDocument?.rooms.flatMap((room) =>
-        room.pointsPx.map(([x1, y1], index) => {
-          const [x2, y2] = room.pointsPx[(index + 1) % room.pointsPx.length];
-          const dx = Math.abs(x2 - x1);
-          const dy = Math.abs(y2 - y1);
-          return {
-            id: `dashboard-room-${room.id}-${index}`,
-            occlusionKey: wallSegmentGeometryKey(x1, y1, x2, y2),
-            x1,
-            y1,
-            x2,
-            y2,
-            axis: dy <= 1 ? "horizontal" : dx <= 1 ? "vertical" : "diagonal"
-          };
-        })
-      ) ?? []
+    if (!floorplanDocument) return [];
+    const placement = floorplanRadarPlacement();
+    if (!placement) return [];
+    const room = findRoomContainingPoint(
+      floorplanDocument.rooms,
+      { x: placement.originX, y: placement.originY },
+      (candidate) => candidate.pointsPx
     );
-  }
-
-  function outerBoundsOcclusionSegments() {
-    const scale = floorplanScaleEstimate();
-    if (!scale) return [];
-    const { x, y, width, height } = scale.outerBounds;
-    const x2 = x + width;
-    const y2 = y + height;
-    return [
-      { id: "dashboard-outer-top", occlusionKey: "outer-stored-top", locked: true, x1: x, y1: y, x2, y2: y, axis: "horizontal" },
-      { id: "dashboard-outer-right", occlusionKey: "outer-stored-right", locked: true, x1: x2, y1: y, x2, y2, axis: "vertical" },
-      { id: "dashboard-outer-bottom", occlusionKey: "outer-stored-bottom", locked: true, x1: x2, y1: y2, x2: x, y2, axis: "horizontal" },
-      { id: "dashboard-outer-left", occlusionKey: "outer-stored-left", locked: true, x1: x, y1: y2, x2: x, y2: y, axis: "vertical" }
-    ];
+    if (!room) return [];
+    return buildBoundaryOcclusionSegments([{
+      id: room.id,
+      points: room.pointsPx,
+      segmentPrefix: "stored-room"
+    }]);
   }
 
   function radarOcclusionSegments() {
-    return [...roomBoundarySegments(), ...outerBoundsOcclusionSegments()];
+    return roomBoundarySegments();
   }
 
   async function chooseStatusLed(enabled: boolean): Promise<void> {
@@ -332,7 +316,7 @@
     addBytes(systemStatus?.flash?.firmwareUsedBytes, systemStatus?.flash?.otaSlotBytes, dataStorageUsedBytes)
   );
   const flashOccupancyText = $derived(
-    `${formatBytes(flashOccupiedBytes)} / ${formatBytes(systemStatus?.flash?.totalBytes)}`
+    `${formatCompactBytes(flashOccupiedBytes)} / ${formatCompactBytes(systemStatus?.flash?.totalBytes)}`
   );
   const flashOccupancyPercentText = $derived(formatStoragePercent(flashOccupiedBytes, systemStatus?.flash?.totalBytes));
 </script>
@@ -340,47 +324,47 @@
 <section class="dashboard-workspace">
   <div class="floorplan-workflow-card dashboard-intro-card">
     <div>
-      <strong>대시보드</strong>
-      <span>센서 상태와 실시간 감지 정보를 한 화면에서 확인합니다.</span>
+      <strong>{messages.dashboard.title}</strong>
+      <span>{messages.dashboard.description}</span>
     </div>
     <dl class="floorplan-stored-summary dashboard-intro-summary">
       <div>
-        <dt>연결</dt>
-          <dd>{deviceState?.connected ? "연결됨" : "대기 중"}</dd>
+        <dt>{messages.dashboard.connection}</dt>
+          <dd>{deviceState?.connected ? messages.dashboard.connected : messages.dashboard.waiting}</dd>
       </div>
       <div>
-        <dt>업데이트</dt>
+        <dt>{messages.dashboard.updated}</dt>
         <dd>{updatedText}</dd>
       </div>
     </dl>
   </div>
 
-  <section class="dashboard-status-grid" aria-label="핵심 상태">
+  <section class="dashboard-status-grid" aria-label={messages.dashboard.coreStatus}>
     <div class="floorplan-workflow-card dashboard-status-card" data-tone={deviceState?.presence ? "ok" : "idle"}>
       <div>
-        <span>재실</span>
+        <span>{messages.dashboard.presence}</span>
         <strong>{yesNo(deviceState?.presence)}</strong>
       </div>
     </div>
 
     <div class="floorplan-workflow-card dashboard-status-card" data-tone={deviceState?.motion ? "ok" : "idle"}>
       <div>
-        <span>움직임</span>
+        <span>{messages.dashboard.motion}</span>
         <strong>{yesNo(deviceState?.motion)}</strong>
       </div>
     </div>
 
     <div class="floorplan-workflow-card dashboard-status-card">
       <div>
-        <span>대상 수</span>
-        <strong>{targetCount}개</strong>
+        <span>{messages.dashboard.targetCount}</span>
+        <strong>{messages.dashboard.targetCountValue(targetCount)}</strong>
       </div>
-      <small>이동 {movingTargetCount} · 정지 {stillTargetCount}</small>
+      <small>{messages.dashboard.targetSummary(movingTargetCount, stillTargetCount)}</small>
     </div>
 
     <div class="floorplan-workflow-card dashboard-status-card">
       <div>
-        <span>환경</span>
+        <span>{messages.dashboard.environment}</span>
         <strong>{formatTemperature(deviceState?.temperatureC)}</strong>
       </div>
       <small>{formatPercent(deviceState?.humidityPercent)} · {formatLux(deviceState?.illuminanceLux)}</small>
@@ -391,22 +375,24 @@
     <section class="dashboard-visual-panel">
       <div class="radar-scene-frame dashboard-visual-frame">
         <div class="dashboard-visual-status">
-          <span>{hasFloorplan ? "평면도 준비됨" : "레이더맵 준비됨"}</span>
-          <strong>{targetCount}개 대상</strong>
+          <span>{hasFloorplan ? messages.dashboard.floorplanReady : messages.dashboard.radarReady}</span>
+          <strong>{messages.dashboard.targetLabel(targetCount)}</strong>
         </div>
         {#if floorplanDocument && floorplanImageUrl}
-          <div class="dashboard-floorplan-preview" style={floorplanPreviewStyle()}>
-            <svg
-              viewBox={`0 0 ${floorplanDocument.image.width} ${floorplanDocument.image.height}`}
-              role="img"
-              aria-label="저장된 평면도"
+          <div class="dashboard-floorplan-preview">
+            <FloorplanImageFrame
+              imageUrl={floorplanImageUrl}
+              imageWidth={floorplanDocument.image.width}
+              imageHeight={floorplanDocument.image.height}
+              frameStyle={floorplanPreviewStyle()}
+              ariaLabel={messages.dashboard.savedFloorplanAria}
             >
-              <image
-                href={floorplanImageUrl}
-                width={floorplanDocument.image.width}
-                height={floorplanDocument.image.height}
-                preserveAspectRatio="xMidYMid meet"
-              />
+            <svg
+              class="dashboard-floorplan-room-layer"
+              viewBox={`0 0 ${floorplanDocument.image.width} ${floorplanDocument.image.height}`}
+              preserveAspectRatio="none"
+              role="presentation"
+            >
               {#each floorplanDocument.rooms as room}
                 {@const center = roomCenter(room.pointsPx)}
                 <polygon class="dashboard-floorplan-room" points={roomPoints(room.pointsPx)} />
@@ -428,27 +414,28 @@
               readOnly
               showPlacementLabel={false}
             />
+            </FloorplanImageFrame>
           </div>
         {:else if hasFloorplan || floorplanLoading || floorplanError}
           <div class="dashboard-visual-placeholder">
             <strong>
               {floorplanLoading
-                ? "평면도 불러오는 중"
+                ? messages.dashboard.floorplanLoading
                 : hasFloorplan
-                  ? "평면도 보기 영역"
-                  : "레이더맵 보기 영역"}
+                  ? messages.dashboard.floorplanViewArea
+                  : messages.dashboard.radarViewArea}
             </strong>
             <span>
               {floorplanError
-                ? `평면도를 불러오지 못했습니다. ${floorplanError}`
+                ? messages.dashboard.floorplanLoadFailed(floorplanError)
                 : hasFloorplan
-                  ? "저장된 평면도 이미지를 불러오고 있습니다."
-                  : "저장된 평면도가 없으면 레이더맵이 이 영역에 표시됩니다."}
+                  ? messages.dashboard.floorplanImageLoading
+                  : messages.dashboard.radarFallback}
             </span>
           </div>
         {:else}
           <div class="dashboard-radar-preview">
-            <RadarScene state={deviceState} {config} />
+            <RadarScene messages={messages} state={deviceState} {config} />
           </div>
         {/if}
       </div>
@@ -456,50 +443,50 @@
 
     <aside class="dashboard-side-stack">
       <div class="floorplan-workflow-card dashboard-metric-card">
-        <strong>빠른 이동</strong>
+        <strong>{messages.dashboard.quickNav}</strong>
         <div class="floorplan-stored-tools dashboard-nav-tools">
-          <button type="button" onclick={() => onNavigate("zones")}>구역 설정</button>
-          <button type="button" onclick={() => onNavigate("floorplan")}>평면도</button>
-          <button type="button" onclick={() => onNavigate("stats")}>감지 통계</button>
-          <button type="button" onclick={() => onNavigate("backup")}>관리 / 백업</button>
+          <button type="button" onclick={() => onNavigate("zones")}>{messages.tabs.zones}</button>
+          <button type="button" onclick={() => onNavigate("floorplan")}>{messages.tabs.floorplan}</button>
+          <button type="button" onclick={() => onNavigate("stats")}>{messages.tabs.stats}</button>
+          <button type="button" onclick={() => onNavigate("backup")}>{messages.tabs.backup}</button>
         </div>
       </div>
 
       <div class="floorplan-workflow-card dashboard-metric-card">
-        <strong>구역 상태</strong>
+        <strong>{messages.dashboard.zoneStatus}</strong>
         <dl class="floorplan-stored-summary">
           <div>
-            <dt>구역</dt>
-            <dd>{zoneCount}개</dd>
+            <dt>{messages.dashboard.zone}</dt>
+            <dd>{messages.dashboard.countValue(zoneCount)}</dd>
           </div>
           <div>
-            <dt>필터</dt>
-            <dd>{filterZoneCount}개</dd>
+            <dt>{messages.dashboard.filter}</dt>
+            <dd>{messages.dashboard.countValue(filterZoneCount)}</dd>
           </div>
           <div>
-            <dt>둔감</dt>
-            <dd>{reducedZoneCount}개</dd>
+            <dt>{messages.dashboard.reduced}</dt>
+            <dd>{messages.dashboard.countValue(reducedZoneCount)}</dd>
           </div>
           <div>
-            <dt>제외</dt>
-            <dd>{disabledZoneCount}개</dd>
+            <dt>{messages.dashboard.disabled}</dt>
+            <dd>{messages.dashboard.countValue(disabledZoneCount)}</dd>
           </div>
         </dl>
       </div>
 
       <div class="floorplan-workflow-card dashboard-metric-card">
-        <strong>기기 상태</strong>
+        <strong>{messages.dashboard.deviceStatus}</strong>
         <dl class="floorplan-stored-summary">
           <div>
-            <dt>펌웨어</dt>
-            <dd>{systemStatus?.firmware?.version ?? (systemStatusLoading ? "확인 중" : "-")}</dd>
+            <dt>{messages.dashboard.firmware}</dt>
+            <dd>{systemStatus?.firmware?.version ?? (systemStatusLoading ? messages.dashboard.checking : "-")}</dd>
           </div>
           <div>
-            <dt>대시보드</dt>
+            <dt>{messages.dashboard.dashboard}</dt>
             <dd>{systemStatus?.dashboard?.version ?? "-"}</dd>
           </div>
           <div>
-            <dt>Wi-Fi</dt>
+            <dt>{messages.dashboard.wifi}</dt>
             <dd>
               <span class="wifi-strength" aria-label={`Wi-Fi ${wifiInfo.label}`}>
                 {#each [0, 1, 2, 3] as index}
@@ -510,74 +497,86 @@
             </dd>
           </div>
           <div>
-            <dt>저장공간</dt>
-            <dd>{flashOccupancyText} · {flashOccupancyPercentText} 사용 중</dd>
+            <dt>{messages.dashboard.storage}</dt>
+            <dd>{messages.dashboard.storageUsed(flashOccupancyText, flashOccupancyPercentText)}</dd>
           </div>
           <div>
-            <dt>가동 시간</dt>
+            <dt>{messages.dashboard.uptime}</dt>
             <dd>{formatUptime(systemStatus?.firmware?.uptimeSeconds)}</dd>
           </div>
         </dl>
         {#if systemStatusError}
-          <p class="dashboard-note">시스템 정보를 읽지 못했습니다. {systemStatusError}</p>
+          <p class="dashboard-note">{messages.dashboard.systemInfoFailed(systemStatusError)}</p>
         {/if}
       </div>
 
       <div class="floorplan-workflow-card dashboard-metric-card dashboard-tuning-control-card">
-        <strong>고급 설정</strong>
+        <strong>{messages.dashboard.advancedSettings}</strong>
         <button
           class="dashboard-tuning-toggle"
           type="button"
           aria-expanded={tuningOpen}
           onclick={() => (tuningOpen = !tuningOpen)}
         >
-          {tuningOpen ? "접기" : "펼치기"}
+          {tuningOpen ? messages.dashboard.collapse : messages.dashboard.expand}
         </button>
       </div>
 
       {#if tuningOpen}
         <div class="floorplan-workflow-card dashboard-tuning-card">
-          <strong>고급 튜닝</strong>
-          <span>자주 쓰지 않는 기기 제어를 모아둡니다.</span>
+          <strong>{messages.dashboard.advancedTuning}</strong>
+          <span>{messages.dashboard.advancedTuningDescription}</span>
           <dl class="floorplan-stored-summary">
             <div>
-              <dt>LED 동작</dt>
+              <dt>{messages.dashboard.ledBehavior}</dt>
               <dd>
                 {controlStatusLoading
-                  ? "확인 중"
+                  ? messages.dashboard.checking
                   : controlStatus?.statusLedEnabled
-                    ? "켜짐"
+                    ? messages.dashboard.enabled
                     : controlStatus?.statusLedKnown
-                      ? "꺼짐"
+                      ? messages.dashboard.disabledState
                       : "-"}
               </dd>
             </div>
             <div>
-              <dt>자동 꺼짐</dt>
+              <dt>{messages.dashboard.autoOff}</dt>
               <dd>{formatDuration(controlStatus?.ledBlinkDuration)}</dd>
             </div>
             <div>
-              <dt>온습도 보정</dt>
+              <dt>{messages.dashboard.environmentCorrection}</dt>
               <dd>
                 {controlStatusLoading
-                  ? "확인 중"
+                  ? messages.dashboard.checking
                   : controlStatus?.environmentCorrectionEnabled
-                    ? "켜짐"
+                    ? messages.dashboard.enabled
                     : controlStatus?.environmentCorrectionKnown
-                      ? "꺼짐"
-                      : "-"}
+                      ? messages.dashboard.disabledState
+                  : "-"}
               </dd>
+            </div>
+            <div>
+              <dt>{messages.dashboard.legacyPresenceFallback}</dt>
+              <dd>{legacyPresenceFallback ? messages.dashboard.enabled : messages.dashboard.disabledState}</dd>
             </div>
           </dl>
           {#if controlStatusError}
-            <p class="dashboard-note">제어 상태를 읽지 못했습니다. {controlStatusError}</p>
+            <p class="dashboard-note">{messages.dashboard.controlStatusFailed(controlStatusError)}</p>
           {/if}
           <div class="dashboard-tuning-actions">
-            <button type="button" disabled={controlActionBusy} onclick={() => (environmentDialogOpen = true)}>온습도 보정</button>
-            <button type="button" disabled={controlActionBusy} onclick={() => (ledDialogOpen = true)}>Status LED 제어</button>
-            <button type="button" onclick={() => (diagnosticDialogOpen = true)}>진단 정보</button>
+            <button type="button" disabled={controlActionBusy} onclick={() => (environmentDialogOpen = true)}>{messages.dashboard.environmentCorrection}</button>
+            <button
+              type="button"
+              disabled={controlActionBusy || !config}
+              title={messages.dashboard.legacyPresenceFallbackDescription}
+              onclick={() => onSetLegacyPresenceFallback(!legacyPresenceFallback)}
+            >
+              {legacyPresenceFallback ? messages.dashboard.turnOff : messages.dashboard.turnOn}
+            </button>
+            <button type="button" disabled={controlActionBusy} onclick={() => (ledDialogOpen = true)}>{messages.dashboard.statusLedControl}</button>
+            <button type="button" onclick={() => (diagnosticDialogOpen = true)}>{messages.dashboard.diagnostics}</button>
             <button type="button" disabled={integrationModeActionBusy} onclick={onChangeIntegrationMode}>
-              {integrationModeActionBusy ? "변경 중..." : integrationModeButtonText}
+              {integrationModeActionBusy ? messages.dashboard.changing : integrationModeButtonText}
             </button>
           </div>
         </div>
@@ -595,33 +594,33 @@
       aria-labelledby="dashboard-led-dialog-title"
     >
       <div class="dashboard-dialog-heading">
-        <strong id="dashboard-led-dialog-title">Status LED 제어</strong>
-        <span>LED 동작과 재실 감지 시 자동 꺼짐 시간을 선택합니다.</span>
+        <strong id="dashboard-led-dialog-title">{messages.dashboard.statusLedControl}</strong>
+        <span>{messages.dashboard.ledDialogDescription}</span>
       </div>
       <dl class="floorplan-stored-summary">
         <div>
-          <dt>LED 동작</dt>
-          <dd>{controlStatus?.statusLedEnabled ? "켜짐" : controlStatus?.statusLedKnown ? "꺼짐" : "-"}</dd>
+          <dt>{messages.dashboard.ledBehavior}</dt>
+          <dd>{controlStatus?.statusLedEnabled ? messages.dashboard.enabled : controlStatus?.statusLedKnown ? messages.dashboard.disabledState : "-"}</dd>
         </div>
         <div>
-          <dt>자동 꺼짐</dt>
+          <dt>{messages.dashboard.autoOff}</dt>
           <dd>{formatDuration(controlStatus?.ledBlinkDuration)}</dd>
         </div>
       </dl>
       <div class="dashboard-dialog-section">
-        <strong>LED 동작</strong>
+        <strong>{messages.dashboard.ledBehavior}</strong>
         <div class="dashboard-dialog-actions">
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseStatusLed(true)}>켜기</button>
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseStatusLed(false)}>끄기</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseStatusLed(true)}>{messages.dashboard.turnOn}</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseStatusLed(false)}>{messages.dashboard.turnOff}</button>
         </div>
       </div>
       <div class="dashboard-dialog-section">
-        <strong>자동 꺼짐 시간</strong>
+        <strong>{messages.dashboard.autoOff}</strong>
         <div class="dashboard-dialog-actions">
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(0)}>계속</button>
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(30)}>30초</button>
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(60)}>60초</button>
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(300)}>5분</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(0)}>{messages.dashboard.always}</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(30)}>{messages.dashboard.seconds(30)}</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(60)}>{messages.dashboard.seconds(60)}</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseLedDuration(300)}>{messages.dashboard.minutes(5)}</button>
         </div>
       </div>
       <div class="floorplan-delete-dialog-actions">
@@ -631,7 +630,7 @@
           disabled={controlActionBusy}
           onclick={() => (ledDialogOpen = false)}
         >
-          닫기
+          {messages.common.close}
         </button>
       </div>
     </div>
@@ -649,39 +648,39 @@
       aria-labelledby="dashboard-environment-dialog-title"
     >
       <div class="dashboard-dialog-heading">
-        <strong id="dashboard-environment-dialog-title">온습도 보정</strong>
-        <span>기기 내부 보정 사용 여부와 사용자 오프셋을 조정합니다.</span>
+        <strong id="dashboard-environment-dialog-title">{messages.dashboard.environmentCorrection}</strong>
+        <span>{messages.dashboard.environmentDialogDescription}</span>
       </div>
       <dl class="floorplan-stored-summary">
         <div>
-          <dt>보정 동작</dt>
-          <dd>{controlStatus?.environmentCorrectionEnabled ? "켜짐" : controlStatus?.environmentCorrectionKnown ? "꺼짐" : "-"}</dd>
+          <dt>{messages.dashboard.correctionBehavior}</dt>
+          <dd>{controlStatus?.environmentCorrectionEnabled ? messages.dashboard.enabled : controlStatus?.environmentCorrectionKnown ? messages.dashboard.disabledState : "-"}</dd>
         </div>
         <div>
-          <dt>온도 오프셋</dt>
+          <dt>{messages.dashboard.temperatureOffset}</dt>
           <dd>{formatOffset(controlStatus?.temperatureOffset, "°C")}</dd>
         </div>
         <div>
-          <dt>습도 오프셋</dt>
+          <dt>{messages.dashboard.humidityOffset}</dt>
           <dd>{formatOffset(controlStatus?.humidityOffset, "%")}</dd>
         </div>
       </dl>
       <div class="dashboard-dialog-section">
-        <strong>보정 동작</strong>
+        <strong>{messages.dashboard.correctionBehavior}</strong>
         <div class="dashboard-dialog-actions">
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseEnvironmentCorrection(true)}>켜기</button>
-          <button type="button" disabled={controlActionBusy} onclick={() => chooseEnvironmentCorrection(false)}>끄기</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseEnvironmentCorrection(true)}>{messages.dashboard.turnOn}</button>
+          <button type="button" disabled={controlActionBusy} onclick={() => chooseEnvironmentCorrection(false)}>{messages.dashboard.turnOff}</button>
         </div>
       </div>
       <div class="dashboard-dialog-section">
-        <strong>온도 오프셋</strong>
+        <strong>{messages.dashboard.temperatureOffset}</strong>
         <div class="dashboard-dialog-actions">
           <button type="button" disabled={controlActionBusy} onclick={() => nudgeTemperatureOffset(-0.1)}>-0.1°C</button>
           <button type="button" disabled={controlActionBusy} onclick={() => nudgeTemperatureOffset(0.1)}>+0.1°C</button>
         </div>
       </div>
       <div class="dashboard-dialog-section">
-        <strong>습도 오프셋</strong>
+        <strong>{messages.dashboard.humidityOffset}</strong>
         <div class="dashboard-dialog-actions">
           <button type="button" disabled={controlActionBusy} onclick={() => nudgeHumidityOffset(-0.5)}>-0.5%</button>
           <button type="button" disabled={controlActionBusy} onclick={() => nudgeHumidityOffset(0.5)}>+0.5%</button>
@@ -694,7 +693,7 @@
           disabled={controlActionBusy}
           onclick={() => (environmentDialogOpen = false)}
         >
-          닫기
+          {messages.common.close}
         </button>
       </div>
     </div>

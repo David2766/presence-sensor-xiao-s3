@@ -140,6 +140,10 @@ sensor:
     update_interval: 500ms
     accuracy_decimals: 0
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        if (id(target_1_filter_blocked) || id(target_2_filter_blocked) || id(target_3_filter_blocked)) return 0;
+        return id(radar_api).tracker_output().still_track_count;
+      }
       int count = 0;
       if (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) <= id(dir_stationary_speed)) count++;
       if (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) <= id(dir_stationary_speed)) count++;
@@ -152,6 +156,10 @@ sensor:
     update_interval: 500ms
     accuracy_decimals: 0
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        if (id(target_1_filter_blocked) || id(target_2_filter_blocked) || id(target_3_filter_blocked)) return 0;
+        return id(radar_api).tracker_output().moving_track_count;
+      }
       int count = 0;
       if (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) > id(dir_stationary_speed)) count++;
       if (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) > id(dir_stationary_speed)) count++;
@@ -241,6 +249,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[0];
+        return track.valid ? track.x_mm : 0;
+      }
       if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
@@ -253,6 +265,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[0];
+        return track.valid ? track.y_mm : 0;
+      }
       if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
@@ -265,6 +281,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[0];
+        return track.valid ? track.speed_cm_s : 0;
+      }
       if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
@@ -277,6 +297,12 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[0];
+        if (!track.valid) return 0;
+        constexpr float radians_to_degrees = 57.295779513f;
+        return atan2f(track.x_mm, track.y_mm) * radians_to_degrees;
+      }
       if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
@@ -289,6 +315,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[0];
+        return track.valid ? track.distance_mm : 0;
+      }
       if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return 0;
       }
@@ -303,6 +333,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[1];
+        return track.valid ? track.x_mm : 0;
+      }
       if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
@@ -315,6 +349,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[1];
+        return track.valid ? track.y_mm : 0;
+      }
       if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
@@ -327,6 +365,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[1];
+        return track.valid ? track.speed_cm_s : 0;
+      }
       if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
@@ -339,6 +381,12 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[1];
+        if (!track.valid) return 0;
+        constexpr float radians_to_degrees = 57.295779513f;
+        return atan2f(track.x_mm, track.y_mm) * radians_to_degrees;
+      }
       if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
@@ -351,6 +399,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[1];
+        return track.valid ? track.distance_mm : 0;
+      }
       if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return 0;
       }
@@ -365,6 +417,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[2];
+        return track.valid ? track.x_mm : 0;
+      }
       if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
@@ -377,6 +433,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[2];
+        return track.valid ? track.y_mm : 0;
+      }
       if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
@@ -389,6 +449,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[2];
+        return track.valid ? track.speed_cm_s : 0;
+      }
       if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
@@ -401,6 +465,12 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[2];
+        if (!track.valid) return 0;
+        constexpr float radians_to_degrees = 57.295779513f;
+        return atan2f(track.x_mm, track.y_mm) * radians_to_degrees;
+      }
       if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }
@@ -413,6 +483,10 @@ sensor:
     accuracy_decimals: 0
     update_interval: 2s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[2];
+        return track.valid ? track.distance_mm : 0;
+      }
       if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return 0;
       }

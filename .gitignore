@@ -15,11 +15,8 @@ secrets.yaml
 **/.pio/
 **/.pioenvs/
 **/.piolibdeps/
-*.bin
 *.elf
 *.map
-*.factory.bin
-*.ota.bin
 *.log
 *.bak
 .DS_Store

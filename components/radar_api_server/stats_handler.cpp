@@ -4,6 +4,8 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <esp_http_server.h>
+#include <string>
 
 namespace esphome {
 namespace radar_api_server {
@@ -15,7 +17,7 @@ bool StatsHandler::can_handle(AsyncWebServerRequest *request) const {
   if (request->method() == HTTP_GET)
     return url == "/api/stats";
   if (request->method() == HTTP_POST)
-    return url == "/api/stats" || url == "/api/stats/upload/start" || url == "/api/stats/upload/chunk" ||
+    return url == "/api/stats/upload/start" || url == "/api/stats/upload/chunk" ||
            url == "/api/stats/upload/commit";
   return false;
 }
@@ -32,10 +34,6 @@ bool StatsHandler::handle(AsyncWebServerRequest *request) {
   if (request->method() == HTTP_POST) {
     char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
     auto url = request->url_to(url_buf);
-    if (url == "/api/stats") {
-      this->handle_post_stats_(request);
-      return true;
-    }
     if (url == "/api/stats/upload/start") {
       this->handle_upload_start_(request);
       return true;
@@ -54,46 +52,42 @@ bool StatsHandler::handle(AsyncWebServerRequest *request) {
 }
 
 void StatsHandler::handle_get_stats_(AsyncWebServerRequest *request) {
-  const std::string data = this->stats_store_->current_json();
-
-  auto *response = request->beginResponse(200, "application/json", data);
-  request->send(response);
-}
-
-void StatsHandler::handle_post_stats_(AsyncWebServerRequest *request) {
-  if (!request->hasArg("data")) {
-    http_response::send_error(request, 400, "missing_data");
-    return;
-  }
-
-  const std::string data = request->arg("data");
-  if (!this->stats_store_->replace_json(data)) {
-    http_response::send_error(request, 500, "stats_write_failed");
-    return;
-  }
-
-  http_response::send_json(request, 200, R"({"ok":true})");
+  httpd_req_t *raw_request = *request;
+  httpd_resp_set_type(raw_request, "application/json");
+  httpd_resp_set_hdr(raw_request, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(raw_request, "Cache-Control", "no-store");
+  this->stats_store_->stream_json(raw_request);
 }
 
 void StatsHandler::handle_upload_start_(AsyncWebServerRequest *request) {
   uint32_t session_id = 0;
   if (!this->parse_upload_session_(request, &session_id)) {
-    http_response::send_error(request, 400, "invalid_session");
+    http_response::send_error_info(request, 400, "invalid_session", "invalid_request", "error",
+                                   R"({"field":"session"})");
     return;
   }
   if (!request->hasArg("size")) {
-    http_response::send_error(request, 400, "missing_size");
+    http_response::send_error_info(request, 400, "missing_size", "invalid_request", "error",
+                                   R"({"field":"size"})");
     return;
   }
 
   const uint32_t size = std::strtoul(request->arg("size").c_str(), nullptr, 10);
-  if (size == 0 || size > this->storage_->payload_max_size(RadarPayloadTarget::STATS)) {
-    http_response::send_error(request, 413, "payload_too_large");
+  const uint32_t max_size = this->storage_->payload_max_size(RadarPayloadTarget::STATS);
+  if (size == 0 || size > max_size) {
+    std::string detail = R"({"target":"stats","maxBytes":)";
+    detail += std::to_string(max_size);
+    detail += R"(,"receivedBytes":)";
+    detail += std::to_string(size);
+    detail += "}";
+    http_response::send_error_info(request, 413, "payload_too_large", "upload_payload_too_large", "error",
+                                   detail.c_str());
     return;
   }
 
   if (!this->storage_->start_upload(RadarPayloadTarget::STATS, size, session_id)) {
-    http_response::send_error(request, 500, "erase_failed");
+    http_response::send_error_info(request, 500, "erase_failed", "upload_storage_failed", "error",
+                                   R"({"target":"stats","where":"start_upload"})");
     return;
   }
 
@@ -102,26 +96,35 @@ void StatsHandler::handle_upload_start_(AsyncWebServerRequest *request) {
 
 void StatsHandler::handle_upload_chunk_(AsyncWebServerRequest *request) {
   if (!request->hasArg("offset") || !request->hasArg("data")) {
-    http_response::send_error(request, 400, "missing_chunk");
+    http_response::send_error_info(request, 400, "missing_chunk", "invalid_request", "error",
+                                   R"({"field":"offset,data"})");
     return;
   }
   uint32_t session_id = 0;
   if (!this->parse_upload_session_(request, &session_id)) {
-    http_response::send_error(request, 400, "invalid_session");
+    http_response::send_error_info(request, 400, "invalid_session", "invalid_request", "error",
+                                   R"({"field":"session"})");
     return;
   }
 
   const uint32_t offset = std::strtoul(request->arg("offset").c_str(), nullptr, 10);
   std::string decoded;
   if (!this->decode_hex_(request->arg("data"), &decoded)) {
-    http_response::send_error(request, 400, "invalid_hex");
+    http_response::send_error_info(request, 400, "invalid_hex", "invalid_request", "error",
+                                   R"({"field":"data","reason":"invalid_hex"})");
     return;
   }
 
   if (!this->storage_->write_upload_chunk(RadarPayloadTarget::STATS, offset,
                                           reinterpret_cast<const uint8_t *>(decoded.data()), decoded.size(),
                                           session_id)) {
-    http_response::send_error(request, 500, "chunk_write_failed");
+    std::string detail = R"({"target":"stats","where":"write_upload_chunk","offset":)";
+    detail += std::to_string(offset);
+    detail += R"(,"size":)";
+    detail += std::to_string(decoded.size());
+    detail += "}";
+    http_response::send_error_info(request, 500, "chunk_write_failed", "upload_storage_failed", "error",
+                                   detail.c_str());
     return;
   }
 
@@ -131,12 +134,14 @@ void StatsHandler::handle_upload_chunk_(AsyncWebServerRequest *request) {
 void StatsHandler::handle_upload_commit_(AsyncWebServerRequest *request) {
   uint32_t session_id = 0;
   if (!this->parse_upload_session_(request, &session_id)) {
-    http_response::send_error(request, 400, "invalid_session");
+    http_response::send_error_info(request, 400, "invalid_session", "invalid_request", "error",
+                                   R"({"field":"session"})");
     return;
   }
 
   if (!this->storage_->commit_upload(RadarPayloadTarget::STATS, session_id)) {
-    http_response::send_error(request, 409, "upload_incomplete");
+    http_response::send_error_info(request, 409, "upload_incomplete", "upload_incomplete", "error",
+                                   R"({"target":"stats"})");
     return;
   }
 

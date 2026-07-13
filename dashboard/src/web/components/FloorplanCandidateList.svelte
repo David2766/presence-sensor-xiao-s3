@@ -1,5 +1,6 @@
-﻿<script>
+<script>
   let {
+    messages,
     candidates = [],
     selectedCandidateId = "",
     onSelect,
@@ -33,11 +34,8 @@
     showCandidateTools = false
   } = $props();
 
-  const statusLabel = {
-    candidate: "후보",
-    confirmed: "확정",
-    rejected: "제외"
-  };
+  const text = $derived(messages.floorplan.candidateList);
+
   function selectCandidate(id) {
     if (selectionLocked && id !== selectedCandidateId) return;
     onSelect?.(id);
@@ -54,9 +52,9 @@
   function sizeNotes(size) {
     if (!size) return "";
     const notes = [];
-    if (size.widthFromOuter) notes.push("가로 전체 기준");
-    if (size.heightFromOuter) notes.push("세로 전체 기준");
-    if (size.manuallyEdited) notes.push("직접 수정됨");
+    if (size.widthFromOuter) notes.push(text.notes.widthFromOuter);
+    if (size.heightFromOuter) notes.push(text.notes.heightFromOuter);
+    if (size.manuallyEdited) notes.push(text.notes.manuallyEdited);
     return notes.join(" · ");
   }
 
@@ -72,7 +70,7 @@
 </script>
 
 <div class="floorplan-candidate-card">
-  <strong>방 목록</strong>
+  <strong>{text.title}</strong>
   {#if candidates.length}
     <ul>
       {#each candidates as candidate}
@@ -83,11 +81,11 @@
             disabled={selectionLocked && candidate.id !== selectedCandidateId}
             onclick={() => selectCandidate(candidate.id)}
           >
-            <span>{candidate.name || "이름 없음"}</span>
-            <em>{statusLabel[candidate.status]} · 신뢰도 {candidate.confidence}%</em>
+            <span>{candidate.name || text.noName}</span>
+            <em>{text.status[candidate.status]} · {text.confidence(candidate.confidence)}</em>
             {#if mode === "ocr" && showEstimatedSizes && candidateEstimatedSize(candidate)}
               {@const size = candidateEstimatedSize(candidate)}
-              <em>{size.widthPx} x {size.heightPx}px · 약 {size.widthMm} x {size.heightMm}mm</em>
+              <em>{text.approximateSize(size.widthPx, size.heightPx, size.widthMm, size.heightMm)}</em>
               {#if sizeNotes(size)}
                 <em>{sizeNotes(size)}</em>
               {/if}
@@ -99,22 +97,22 @@
               <input
                 value={candidate.name}
                 maxlength="16"
-                placeholder="방 이름"
+                placeholder={text.roomNamePlaceholder}
                 oninput={(event) => onRename?.(candidate.id, event.currentTarget.value)}
               />
               {#if showEstimatedSizes && candidateEstimatedSize(candidate)}
                 {@const size = candidateEstimatedSize(candidate)}
                 <div class="floorplan-estimated-size">
-                  <span>추정 크기</span>
+                  <span>{text.estimatedSize}</span>
                   <strong>{size.widthMm} x {size.heightMm}mm</strong>
-                  <em>{size.widthPx} x {size.heightPx}px 기준</em>
+                  <em>{text.estimatedPixelBasis(size.widthPx, size.heightPx)}</em>
                   {#if sizeNotes(size)}
                     <em>{sizeNotes(size)}</em>
                   {/if}
                 </div>
                 <div class={`floorplan-size-fields ${size.manuallyEdited ? "manual" : ""}`}>
                   <label>
-                    <span>가로</span>
+                    <span>{text.width}</span>
                     <input
                       inputmode="decimal"
                       value={measurementValue(candidate, "width")}
@@ -123,7 +121,7 @@
                     />
                   </label>
                   <label>
-                    <span>세로</span>
+                    <span>{text.height}</span>
                     <input
                       inputmode="decimal"
                       value={measurementValue(candidate, "height")}
@@ -139,26 +137,26 @@
               <input
                 value={candidate.name}
                 maxlength="16"
-                placeholder="방 이름"
+                placeholder={text.roomNamePlaceholder}
                 oninput={(event) => onRename?.(candidate.id, event.currentTarget.value)}
               />
               <div>
                 {#if snapEditActive && snapEditCandidateId === candidate.id}
-                  <span class="floorplan-inline-tool-note">평면도에서 벽에 맞추는 중입니다.</span>
+                  <span class="floorplan-inline-tool-note">{text.inline.snapActive}</span>
                 {:else if splitDraftActive && splitDraftCandidateId === candidate.id}
-                  <span class="floorplan-inline-tool-note">평면도에서 방을 나누는 중입니다.</span>
+                  <span class="floorplan-inline-tool-note">{text.inline.splitActive}</span>
                 {:else if mergeDraftActive}
                   <span class="floorplan-inline-tool-note">
-                    {mergeSelected(candidate) ? "합칠 방으로 선택되었습니다." : "합칠 방을 하나 더 선택하세요."}
+                    {mergeSelected(candidate) ? text.inline.mergeSelected : text.inline.mergePickMore}
                   </span>
                 {:else if showCandidateTools}
-                  <button type="button" onclick={() => onStartSnapEdit?.(candidate.id)}>벽에 맞추기</button>
-                  <button type="button" onclick={() => onStartSplitDraft?.(candidate.id)}>방 나누기</button>
-                  <button type="button" onclick={() => onStartMergeDraft?.()}>방 합치기</button>
+                  <button type="button" onclick={() => onStartSnapEdit?.(candidate.id)}>{text.actions.snap}</button>
+                  <button type="button" onclick={() => onStartSplitDraft?.(candidate.id)}>{text.actions.split}</button>
+                  <button type="button" onclick={() => onStartMergeDraft?.()}>{text.actions.merge}</button>
                 {/if}
-                <button type="button" onclick={() => onConfirm?.(candidate.id)}>확정</button>
-                <button type="button" onclick={() => onReject?.(candidate.id)}>제외</button>
-                <button type="button" class="danger-button" onclick={() => onRemove?.(candidate.id)}>삭제</button>
+                <button type="button" onclick={() => onConfirm?.(candidate.id)}>{text.actions.confirm}</button>
+                <button type="button" onclick={() => onReject?.(candidate.id)}>{text.actions.reject}</button>
+                <button type="button" class="danger-button" onclick={() => onRemove?.(candidate.id)}>{text.actions.remove}</button>
               </div>
             </div>
           {/if}
@@ -166,7 +164,6 @@
       {/each}
     </ul>
   {:else}
-    <span>아직 생성된 방 후보가 없습니다.</span>
+    <span>{text.noCandidates}</span>
   {/if}
 </div>
-

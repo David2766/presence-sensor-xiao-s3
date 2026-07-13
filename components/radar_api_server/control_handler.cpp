@@ -155,7 +155,8 @@ void ControlHandler::handle_status_led_(AsyncWebServerRequest *request) {
   std::string body;
   bool enabled = false;
   if (!body_arg(request, &body) || !read_bool_field(body, "enabled", &enabled)) {
-    http_response::send_error(request, 400, "invalid_enabled");
+    http_response::send_error_info(request, 400, "invalid_enabled", "invalid_request", "error",
+                                   R"({"field":"enabled","target":"status_led"})");
     return;
   }
 
@@ -170,7 +171,8 @@ void ControlHandler::handle_led_duration_(AsyncWebServerRequest *request) {
   std::string body;
   float seconds = 0.0f;
   if (!body_arg(request, &body) || !read_float_field(body, "seconds", &seconds)) {
-    http_response::send_error(request, 400, "invalid_seconds");
+    http_response::send_error_info(request, 400, "invalid_seconds", "invalid_request", "error",
+                                   R"({"field":"seconds","target":"led_duration"})");
     return;
   }
 
@@ -185,7 +187,8 @@ void ControlHandler::handle_environment_correction_(AsyncWebServerRequest *reque
   std::string body;
   bool enabled = false;
   if (!body_arg(request, &body) || !read_bool_field(body, "enabled", &enabled)) {
-    http_response::send_error(request, 400, "invalid_enabled");
+    http_response::send_error_info(request, 400, "invalid_enabled", "invalid_request", "error",
+                                   R"({"field":"enabled","target":"environment_correction"})");
     return;
   }
 
@@ -200,7 +203,8 @@ void ControlHandler::handle_temperature_offset_(AsyncWebServerRequest *request) 
   std::string body;
   float value = 0.0f;
   if (!body_arg(request, &body) || !read_float_field(body, "value", &value)) {
-    http_response::send_error(request, 400, "invalid_value");
+    http_response::send_error_info(request, 400, "invalid_value", "invalid_request", "error",
+                                   R"({"field":"value","target":"temperature_offset"})");
     return;
   }
 
@@ -215,7 +219,8 @@ void ControlHandler::handle_humidity_offset_(AsyncWebServerRequest *request) {
   std::string body;
   float value = 0.0f;
   if (!body_arg(request, &body) || !read_float_field(body, "value", &value)) {
-    http_response::send_error(request, 400, "invalid_value");
+    http_response::send_error_info(request, 400, "invalid_value", "invalid_request", "error",
+                                   R"({"field":"value","target":"humidity_offset"})");
     return;
   }
 

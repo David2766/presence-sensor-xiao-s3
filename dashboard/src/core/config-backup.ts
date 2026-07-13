@@ -4,6 +4,7 @@ import {
   LD2450_ZONE_MIN_X_MM,
   LD2450_ZONE_MIN_Y_MM,
   MAX_CALIBRATION_ZONES,
+  MAX_FLOORPLAN_ROOM_BOUNDARY_POINTS,
   MAX_SOFTWARE_ZONES,
   MAX_ZONE_NAME_LENGTH,
   MAX_ZONE_POINTS
@@ -50,6 +51,8 @@ export interface BackupIssue {
   message: string;
   detail?: string;
   line?: number;
+  code?: string;
+  params?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface BackupValidationResult {
@@ -114,10 +117,13 @@ export async function validateConfigBackupText(rawText: string): Promise<BackupV
         {
           path: "$",
           line: location?.line,
-          message: "JSON 파일을 읽을 수 없습니다.",
-          detail: location
-            ? `${location.line}번째 줄 ${location.column}번째 글자 근처에서 JSON 문법 오류가 발생했습니다.`
-            : String(error)
+          code: "backup_json_parse_failed",
+          params: {
+            column: location?.column,
+            detail: location ? undefined : String(error)
+          },
+          message: "backup_json_parse_failed",
+          detail: location ? undefined : String(error)
         }
       ]
     });
@@ -129,7 +135,8 @@ export async function validateConfigBackupText(rawText: string): Promise<BackupV
         {
           path: "$",
           line: 1,
-          message: "백업 파일의 최상위 값은 객체여야 합니다."
+          code: "backup_root_not_object",
+          message: "backup_root_not_object"
         }
       ]
     });
@@ -137,7 +144,16 @@ export async function validateConfigBackupText(rawText: string): Promise<BackupV
 
   const appMatches = parsed.app === BACKUP_APP_ID;
   if (!appMatches) {
-    warnings.push(issue(rawText, "app", "이 앱에서 만든 백업 파일인지 확인할 수 없습니다.", `예상 값은 ${BACKUP_APP_ID}입니다.`));
+    warnings.push(
+      issue(
+        rawText,
+        "app",
+        "backup_app_mismatch",
+        undefined,
+        "backup_app_mismatch",
+        { expected: BACKUP_APP_ID }
+      )
+    );
   }
 
   if (parsed.formatVersion !== BACKUP_FORMAT_VERSION) {
@@ -145,14 +161,16 @@ export async function validateConfigBackupText(rawText: string): Promise<BackupV
       issue(
         rawText,
         "formatVersion",
-        "지원하지 않는 백업 형식 버전입니다.",
-        `현재 지원 버전은 ${BACKUP_FORMAT_VERSION}입니다.`
+        "backup_format_version_unsupported",
+        undefined,
+        "backup_format_version_unsupported",
+        { supported: BACKUP_FORMAT_VERSION }
       )
     );
   }
 
   if (typeof parsed.createdAt !== "string" || !parsed.createdAt.trim()) {
-    errors.push(issue(rawText, "createdAt", "백업 생성 시간이 없거나 올바르지 않습니다."));
+    errors.push(issue(rawText, "createdAt", "backup_created_at_invalid", undefined, "backup_created_at_invalid"));
   }
 
   const checksumPayload = {
@@ -173,8 +191,9 @@ export async function validateConfigBackupText(rawText: string): Promise<BackupV
       issue(
         rawText,
         "checksum",
-        "체크섬이 없거나 형식이 올바르지 않습니다.",
-        "파일이 수동으로 수정되었거나 이 앱에서 만든 백업이 아닐 수 있습니다."
+        "backup_checksum_missing",
+        undefined,
+        "backup_checksum_missing"
       )
     );
   } else if (!checksumValid) {
@@ -182,8 +201,9 @@ export async function validateConfigBackupText(rawText: string): Promise<BackupV
       issue(
         rawText,
         "checksum",
-        "체크섬이 일치하지 않습니다.",
-        "백업 파일이 수동으로 수정되었거나 일부 내용이 손상되었을 수 있습니다."
+        "backup_checksum_mismatch",
+        undefined,
+        "backup_checksum_mismatch"
       )
     );
   }
@@ -206,7 +226,7 @@ export async function validateConfigBackupText(rawText: string): Promise<BackupV
 }
 
 export function backupValidationMessage(issueItem: BackupIssue): string {
-  const line = issueItem.line ? `${issueItem.line}번째 줄 · ` : "";
+  const line = issueItem.line ? `line ${issueItem.line} · ` : "";
   return `${line}${issueItem.path}: ${issueItem.message}${issueItem.detail ? ` ${issueItem.detail}` : ""}`;
 }
 
@@ -217,16 +237,16 @@ function validateConfig(
   warnings: BackupIssue[]
 ): WebDeviceConfig | null {
   if (!isRecord(value)) {
-    errors.push(issue(rawText, "config", "config 값은 객체여야 합니다."));
+    errors.push(issue(rawText, "config", "backup_config_not_object", undefined, "backup_config_not_object"));
     return null;
   }
 
   if (typeof value.version !== "number" || !Number.isFinite(value.version)) {
-    errors.push(issue(rawText, "config.version", "config.version은 숫자여야 합니다."));
+    errors.push(issue(rawText, "config.version", "backup_config_version_invalid", undefined, "backup_config_version_invalid"));
   }
 
   if (!Array.isArray(value.zones)) {
-    errors.push(issue(rawText, "config.zones", "software zone 목록은 배열이어야 합니다."));
+    errors.push(issue(rawText, "config.zones", "backup_config_zones_not_array", undefined, "backup_config_zones_not_array"));
     return null;
   }
 
@@ -235,8 +255,10 @@ function validateConfig(
       issue(
         rawText,
         "config.zones",
-        `software zone은 최대 ${MAX_SOFTWARE_ZONES}개까지만 가져올 수 있습니다.`,
-        `현재 파일에는 ${value.zones.length}개가 들어 있습니다.`
+        "backup_config_zones_too_many",
+        undefined,
+        "backup_config_zones_too_many",
+        { max: MAX_SOFTWARE_ZONES, actual: value.zones.length }
       )
     );
   }
@@ -245,7 +267,15 @@ function validateConfig(
   const calibrationSource = Array.isArray(value.calibrationZones) ? value.calibrationZones : [];
 
   if (value.calibrationZones !== undefined && !Array.isArray(value.calibrationZones)) {
-    errors.push(issue(rawText, "config.calibrationZones", "오탐 보정 구역 목록은 배열이어야 합니다."));
+    errors.push(
+      issue(
+        rawText,
+        "config.calibrationZones",
+        "backup_calibration_zones_not_array",
+        undefined,
+        "backup_calibration_zones_not_array"
+      )
+    );
   }
 
   if (calibrationSource.length > MAX_CALIBRATION_ZONES) {
@@ -253,8 +283,10 @@ function validateConfig(
       issue(
         rawText,
         "config.calibrationZones",
-        `오탐 보정 구역은 최대 ${MAX_CALIBRATION_ZONES}개까지만 가져올 수 있습니다.`,
-        `현재 파일에는 ${calibrationSource.length}개가 들어 있습니다.`
+        "backup_calibration_zones_too_many",
+        undefined,
+        "backup_calibration_zones_too_many",
+        { max: MAX_CALIBRATION_ZONES, actual: calibrationSource.length }
       )
     );
   }
@@ -270,7 +302,15 @@ function validateConfig(
   );
 
   if (value.floorplan !== undefined && !isRecord(value.floorplan)) {
-    warnings.push(issue(rawText, "config.floorplan", "floorplan 값이 객체가 아니어서 가져오지 않습니다."));
+    warnings.push(
+      issue(
+        rawText,
+        "config.floorplan",
+        "backup_config_floorplan_not_object",
+        undefined,
+        "backup_config_floorplan_not_object"
+      )
+    );
   }
 
   if (errors.length > 0) return null;
@@ -287,7 +327,8 @@ function validateConfig(
               ? value.floorplan.scaleMmPerPx
               : undefined,
           radarOcclusionIgnoredEdges: parseStringArray(value.floorplan.radarOcclusionIgnoredEdges),
-          radar: parseFloorplanRadar(value.floorplan.radar)
+          radar: parseFloorplanRadar(value.floorplan.radar),
+          room: parseFloorplanRoom(value.floorplan.room)
         }
       : undefined
   };
@@ -324,12 +365,20 @@ function validateFloorplanBackup(
 ): BackupFloorplanData | null {
   if (value === undefined) return null;
   if (!isRecord(value)) {
-    warnings.push(issue(rawText, "floorplan", "평면도 백업 값이 객체가 아니어서 가져오지 않습니다."));
+    warnings.push(issue(rawText, "floorplan", "backup_floorplan_not_object", undefined, "backup_floorplan_not_object"));
     return null;
   }
 
   if (!isRecord(value.document)) {
-    warnings.push(issue(rawText, "floorplan.document", "평면도 설정 문서가 없거나 올바르지 않아 가져오지 않습니다."));
+    warnings.push(
+      issue(
+        rawText,
+        "floorplan.document",
+        "backup_floorplan_document_invalid",
+        undefined,
+        "backup_floorplan_document_invalid"
+      )
+    );
     return null;
   }
 
@@ -340,6 +389,32 @@ function validateFloorplanBackup(
   };
 }
 
+function parseFloorplanRoom(value: unknown): NonNullable<WebDeviceConfig["floorplan"]>["room"] | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.id !== "string" || typeof value.name !== "string") return undefined;
+  const room: NonNullable<NonNullable<WebDeviceConfig["floorplan"]>["room"]> = {
+    id: value.id,
+    name: value.name,
+    source: "stored_room"
+  };
+  const boundary = parseFloorplanRoomBoundary(value.boundary);
+  if (boundary.length >= 3) room.boundary = boundary;
+  return room;
+}
+
+function parseFloorplanRoomBoundary(value: unknown): Array<[number, number]> {
+  if (!Array.isArray(value) || value.length > MAX_FLOORPLAN_ROOM_BOUNDARY_POINTS) return [];
+  return value
+    .map((point): [number, number] | null => {
+      if (!Array.isArray(point) || point.length < 2) return null;
+      const x = Number(point[0]);
+      const y = Number(point[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return [Math.round(x), Math.round(y)];
+    })
+    .filter((point): point is [number, number] => point !== null);
+}
+
 function validateFloorplanBackupImage(
   value: unknown,
   rawText: string,
@@ -348,7 +423,15 @@ function validateFloorplanBackupImage(
 ): BackupFloorplanImage | null {
   if (value === undefined) return null;
   if (!isRecord(value)) {
-    warnings.push(issue(rawText, "floorplan.image", "평면도 이미지 백업 값이 객체가 아니어서 가져오지 않습니다."));
+    warnings.push(
+      issue(
+        rawText,
+        "floorplan.image",
+        "backup_floorplan_image_not_object",
+        undefined,
+        "backup_floorplan_image_not_object"
+      )
+    );
     return null;
   }
 
@@ -357,7 +440,15 @@ function validateFloorplanBackupImage(
   const bytes = typeof value.bytes === "number" && Number.isFinite(value.bytes) && value.bytes >= 0 ? Math.round(value.bytes) : 0;
 
   if (!mime || !dataBase64 || bytes <= 0) {
-    errors.push(issue(rawText, "floorplan.image", "평면도 이미지 백업 정보가 부족합니다.", "mime, bytes, dataBase64가 필요합니다."));
+    errors.push(
+      issue(
+        rawText,
+        "floorplan.image",
+        "backup_floorplan_image_incomplete",
+        undefined,
+        "backup_floorplan_image_incomplete"
+      )
+    );
     return null;
   }
 
@@ -372,24 +463,24 @@ function validateFloorplanBackupImage(
 function validateStatsBackup(value: unknown, rawText: string, warnings: BackupIssue[]): WebDeviceStats | null {
   if (value === undefined) return null;
   if (!isRecord(value)) {
-    warnings.push(issue(rawText, "stats", "통계 백업 값이 객체가 아니어서 가져오지 않습니다."));
+    warnings.push(issue(rawText, "stats", "backup_stats_not_object", undefined, "backup_stats_not_object"));
     return null;
   }
 
   const today = isRecord(value.today) || value.today === null ? (value.today as WebDeviceStats["today"]) : null;
   if (value.today !== undefined && !isRecord(value.today) && value.today !== null) {
-    warnings.push(issue(rawText, "stats.today", "오늘 통계 값이 객체가 아니어서 비워둡니다."));
+    warnings.push(issue(rawText, "stats.today", "backup_stats_today_invalid", undefined, "backup_stats_today_invalid"));
   }
 
   const daily = Array.isArray(value.daily) ? (value.daily as WebDeviceStats["daily"]) : [];
   if (value.daily !== undefined && !Array.isArray(value.daily)) {
-    warnings.push(issue(rawText, "stats.daily", "일별 통계 값이 배열이 아니어서 비워둡니다."));
+    warnings.push(issue(rawText, "stats.daily", "backup_stats_daily_invalid", undefined, "backup_stats_daily_invalid"));
   }
 
   const summary = isRecord(value.summary) ? (value.summary as WebDeviceStats["summary"]) : undefined;
   const heatmap = isRecord(value.heatmap) ? (value.heatmap as unknown as WebDeviceStats["heatmap"]) : undefined;
   if (value.heatmap !== undefined && !isRecord(value.heatmap)) {
-    warnings.push(issue(rawText, "stats.heatmap", "히트맵 값이 객체가 아니어서 가져오지 않습니다."));
+    warnings.push(issue(rawText, "stats.heatmap", "backup_stats_heatmap_invalid", undefined, "backup_stats_heatmap_invalid"));
   }
 
   return {
@@ -415,7 +506,7 @@ function validateZoneArray(
   values.forEach((value, index) => {
     const path = `${basePath}[${index}]`;
     if (!isRecord(value)) {
-      errors.push(issue(rawText, path, "구역 정보는 객체여야 합니다."));
+      errors.push(issue(rawText, path, "backup_zone_not_object", undefined, "backup_zone_not_object"));
       return;
     }
 
@@ -427,11 +518,9 @@ function validateZoneArray(
       errors.push({
         path: `${path}.id`,
         line,
-        message: kind === "zone" ? "software zone id가 올바르지 않습니다." : "오탐 보정 구역 id가 올바르지 않습니다.",
-        detail:
-          kind === "zone"
-            ? "zone_1부터 zone_6까지만 사용할 수 있습니다."
-            : "calibration_1부터 calibration_4까지만 사용할 수 있습니다."
+        message: "backup_zone_id_invalid",
+        code: "backup_zone_id_invalid",
+        params: { kind, max: maxIndex }
       });
       return;
     }
@@ -441,11 +530,9 @@ function validateZoneArray(
       errors.push({
         path: `${path}.id`,
         line,
-        message: `${id}는 사용할 수 없습니다.`,
-        detail:
-          kind === "zone"
-            ? "software zone은 zone_1부터 zone_6까지만 지원합니다."
-            : "오탐 보정 구역은 calibration_1부터 calibration_4까지만 지원합니다."
+        message: "backup_zone_id_out_of_range",
+        code: "backup_zone_id_out_of_range",
+        params: { id, kind, max: maxIndex }
       });
       return;
     }
@@ -454,7 +541,9 @@ function validateZoneArray(
       errors.push({
         path: `${path}.id`,
         line,
-        message: `${id}가 중복되었습니다.`
+        message: "backup_zone_id_duplicate",
+        code: "backup_zone_id_duplicate",
+        params: { id }
       });
       return;
     }
@@ -472,8 +561,8 @@ function validateZoneArray(
       errors.push({
         path: `${path}.shape`,
         line,
-        message: "오탐 보정 구역은 현재 사각형만 가져올 수 있습니다.",
-        detail: "자동 보정 구역의 최소 크기 보호 로직이 사각형 기준으로 동작합니다."
+        message: "backup_calibration_polygon_unsupported",
+        code: "backup_calibration_polygon_unsupported"
       });
     }
 
@@ -481,7 +570,8 @@ function validateZoneArray(
       warnings.push({
         path: `${path}.minSizeUnlocked`,
         line,
-        message: "minSizeUnlocked 값이 boolean이 아니어서 false로 처리합니다."
+        message: "backup_min_size_unlocked_invalid",
+        code: "backup_min_size_unlocked_invalid"
       });
     }
 
@@ -503,7 +593,7 @@ function validateZoneArray(
 function validateZoneName(value: unknown, path: string, line: number | undefined, errors: BackupIssue[]): string | null {
   if (value === undefined) return "";
   if (typeof value !== "string") {
-    errors.push({ path, line, message: "구역 이름은 문자열이어야 합니다." });
+    errors.push({ path, line, message: "backup_zone_name_not_string", code: "backup_zone_name_not_string" });
     return null;
   }
 
@@ -513,8 +603,9 @@ function validateZoneName(value: unknown, path: string, line: number | undefined
     errors.push({
       path,
       line,
-      message: `구역 이름은 공백 포함 최대 ${MAX_ZONE_NAME_LENGTH}글자까지만 사용할 수 있습니다.`,
-      detail: `현재 이름은 ${length}글자입니다.`
+      message: "backup_zone_name_too_long",
+      code: "backup_zone_name_too_long",
+      params: { max: MAX_ZONE_NAME_LENGTH, actual: length }
     });
     return null;
   }
@@ -528,13 +619,14 @@ function validateZoneType(
   line: number | undefined,
   errors: BackupIssue[]
 ): WebZoneType | null {
-  const allowed: WebZoneType[] = kind === "zone" ? ["detection", "filter", "disabled"] : ["filter", "reduced", "disabled"];
+  const allowed: WebZoneType[] = kind === "zone" ? ["detection", "filter", "disabled", "exit"] : ["filter", "reduced", "disabled"];
   if (typeof value !== "string" || !allowed.includes(value as WebZoneType)) {
     errors.push({
       path,
       line,
-      message: "구역 타입이 올바르지 않습니다.",
-      detail: `허용 값은 ${allowed.join(", ")}입니다.`
+      message: "backup_zone_type_invalid",
+      code: "backup_zone_type_invalid",
+      params: { allowed: allowed.join(", ") }
     });
     return null;
   }
@@ -546,8 +638,8 @@ function validateShape(value: unknown, path: string, line: number | undefined, e
     errors.push({
       path,
       line,
-      message: "구역 shape이 올바르지 않습니다.",
-      detail: "rect 또는 polygon만 사용할 수 있습니다."
+      message: "backup_zone_shape_invalid",
+      code: "backup_zone_shape_invalid"
     });
     return null;
   }
@@ -564,7 +656,7 @@ function validatePoints(
 ): ZonePoint[] | null {
   if (!shape) return null;
   if (!Array.isArray(value)) {
-    errors.push({ path, line: fallbackLine, message: "points 값은 배열이어야 합니다." });
+    errors.push({ path, line: fallbackLine, message: "backup_zone_points_not_array", code: "backup_zone_points_not_array" });
     return null;
   }
 
@@ -572,8 +664,9 @@ function validatePoints(
     errors.push({
       path,
       line: findLineForPath(rawText, path) || fallbackLine,
-      message: "사각형 구역은 꼭짓점이 정확히 4개여야 합니다.",
-      detail: `현재 꼭짓점은 ${value.length}개입니다.`
+      message: "backup_zone_rect_points_invalid",
+      code: "backup_zone_rect_points_invalid",
+      params: { actual: value.length }
     });
   }
 
@@ -581,8 +674,9 @@ function validatePoints(
     errors.push({
       path,
       line: findLineForPath(rawText, path) || fallbackLine,
-      message: `다각형 구역은 꼭짓점이 최소 3개, 최대 ${MAX_ZONE_POINTS}개여야 합니다.`,
-      detail: `현재 꼭짓점은 ${value.length}개입니다.`
+      message: "backup_zone_polygon_points_invalid",
+      code: "backup_zone_polygon_points_invalid",
+      params: { min: 3, max: MAX_ZONE_POINTS, actual: value.length }
     });
   }
 
@@ -591,33 +685,35 @@ function validatePoints(
     const pointPath = `${path}[${index}]`;
     const line = findLineForPoint(rawText, point) || fallbackLine;
     if (!Array.isArray(point) || point.length !== 2) {
-      errors.push({ path: pointPath, line, message: "각 꼭짓점은 [x, y] 형태여야 합니다." });
+      errors.push({ path: pointPath, line, message: "backup_zone_point_invalid", code: "backup_zone_point_invalid" });
       return;
     }
 
     const [x, y] = point;
     if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y)) {
-      errors.push({ path: pointPath, line, message: "x, y 좌표는 숫자여야 합니다." });
+      errors.push({ path: pointPath, line, message: "backup_zone_point_number_invalid", code: "backup_zone_point_number_invalid" });
       return;
     }
     if (!Number.isInteger(x) || !Number.isInteger(y)) {
-      errors.push({ path: pointPath, line, message: "x, y 좌표는 정수 mm 값이어야 합니다." });
+      errors.push({ path: pointPath, line, message: "backup_zone_point_integer_invalid", code: "backup_zone_point_integer_invalid" });
       return;
     }
     if (x < LD2450_ZONE_MIN_X_MM || x > LD2450_ZONE_MAX_X_MM) {
       errors.push({
         path: `${pointPath}.x`,
         line,
-        message: `x 좌표가 허용 범위를 벗어났습니다: ${x}`,
-        detail: `허용 범위는 ${LD2450_ZONE_MIN_X_MM} ~ ${LD2450_ZONE_MAX_X_MM}mm입니다.`
+        message: "backup_zone_point_x_out_of_range",
+        code: "backup_zone_point_x_out_of_range",
+        params: { value: x, min: LD2450_ZONE_MIN_X_MM, max: LD2450_ZONE_MAX_X_MM }
       });
     }
     if (y < LD2450_ZONE_MIN_Y_MM || y > LD2450_ZONE_MAX_Y_MM) {
       errors.push({
         path: `${pointPath}.y`,
         line,
-        message: `y 좌표가 허용 범위를 벗어났습니다: ${y}`,
-        detail: `허용 범위는 ${LD2450_ZONE_MIN_Y_MM} ~ ${LD2450_ZONE_MAX_Y_MM}mm입니다.`
+        message: "backup_zone_point_y_out_of_range",
+        code: "backup_zone_point_y_out_of_range",
+        params: { value: y, min: LD2450_ZONE_MIN_Y_MM, max: LD2450_ZONE_MAX_Y_MM }
       });
     }
     points.push([x, y]);
@@ -627,8 +723,8 @@ function validatePoints(
     errors.push({
       path,
       line: findLineForPath(rawText, path) || fallbackLine,
-      message: "모든 꼭짓점이 (0, 0)입니다.",
-      detail: "이 구역은 빈 구역으로 간주되어 가져올 수 없습니다."
+      message: "backup_zone_points_all_zero",
+      code: "backup_zone_points_all_zero"
     });
   }
 
@@ -638,8 +734,8 @@ function validatePoints(
       errors.push({
         path,
         line: findLineForPath(rawText, path) || fallbackLine,
-        message: "구역의 너비 또는 높이가 0입니다.",
-        detail: "실제로 그릴 수 있는 면적이 있어야 합니다."
+        message: "backup_zone_area_empty",
+        code: "backup_zone_area_empty"
       });
     }
   }
@@ -793,12 +889,21 @@ function emptyResult(partial: Partial<BackupValidationResult>): BackupValidation
   };
 }
 
-function issue(rawText: string, path: string, message: string, detail?: string): BackupIssue {
+function issue(
+  rawText: string,
+  path: string,
+  message: string,
+  detail?: string,
+  code?: string,
+  params?: BackupIssue["params"]
+): BackupIssue {
   return {
     path,
     line: findLineForPath(rawText, path),
     message,
-    detail
+    detail,
+    code,
+    params
   };
 }
 

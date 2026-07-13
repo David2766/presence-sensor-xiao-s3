@@ -3,9 +3,12 @@
 #include "radar_storage.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
+
+struct httpd_req;
 
 namespace esphome {
 namespace radar_api_server {
@@ -17,10 +20,9 @@ class StatsStore {
   void update_today(const std::string &today_json);
   void record_heatmap_hit(float tx, float ty);
   bool finish_day(const std::string &finished_day_json, const std::string &new_today_json);
-  bool replace_json(const std::string &json);
   void clear();
 
-  std::string current_json() const;
+  bool stream_json(httpd_req *request) const;
 
  protected:
   struct Totals {
@@ -34,9 +36,6 @@ class StatsStore {
 
   static constexpr size_t MAX_DAILY_ENTRIES = 30;
 
-  static std::vector<std::string> extract_object_array_(const std::string &json, const char *key);
-  static std::string extract_object_(const std::string &json, const char *key);
-  static std::string extract_string_(const std::string &json, const char *key);
   static int parse_int_after_(const std::string &json, const char *key);
   static void parse_int_array_(const std::string &json, const char *key, int *out, size_t count);
   static Totals parse_totals_(const std::string &json);
@@ -50,6 +49,8 @@ class StatsStore {
   std::string compact_today_heatmap_rle_() const;
   void trim_daily_();
   void trim_heatmap_daily_();
+  bool load_from_storage_(RadarStorage *storage);
+  bool write_json_(bool (*write)(void *context, const char *data, size_t size), void *context) const;
   bool persist_() const;
 
   RadarStorage *storage_{nullptr};

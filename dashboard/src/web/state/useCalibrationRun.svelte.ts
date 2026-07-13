@@ -12,14 +12,45 @@ import {
   type CalibrationRun
 } from "../../core/calibration";
 import { clamp } from "../../core/geometry";
+import type { Messages } from "../i18n/types";
 import type { CalibrationResult, WebDeviceConfig, WebDeviceState } from "../types";
 
 type StatusTone = "ok" | "warn" | "error";
+
+type CalibrationStatusCode =
+  | "calibration_start_requested"
+  | "calibration_pir_passed"
+  | "calibration_sample_collection_started"
+  | "calibration_started"
+  | "calibration_pir_active"
+  | "calibration_no_target"
+  | "calibration_multiple_targets"
+  | "calibration_max_zones_reached"
+  | "calibration_multiple_targets_cancelled"
+  | "calibration_timeout"
+  | "calibration_candidate_failed"
+  | "calibration_score_accepted"
+  | "calibration_saved"
+  | "calibration_running"
+  | "calibration_waiting"
+  | "calibration_waiting_for_target_sample"
+  | "calibration_collecting_samples"
+  | "calibration_analyzing_stability"
+  | "calibration_ready_to_create";
+
+interface CalibrationStatusDetail {
+  acceptedBy?: string;
+  elapsedSeconds?: number;
+  maxSeconds?: number;
+  score?: number;
+  zoneId?: string;
+}
 
 interface CalibrationRunOptions {
   getConfig: () => WebDeviceConfig | null;
   getState: () => WebDeviceState | null;
   getCalibrationZoneCount: () => number;
+  getMessages: () => Messages;
   updateConfig: (mutator: (current: WebDeviceConfig) => WebDeviceConfig) => void;
   selectZone: (zoneId: string) => void;
   setStatus: (message: string, tone: StatusTone) => void;
@@ -29,6 +60,7 @@ export function createCalibrationRun({
   getConfig,
   getState,
   getCalibrationZoneCount,
+  getMessages,
   updateConfig,
   selectZone,
   setStatus
@@ -49,31 +81,31 @@ export function createCalibrationRun({
     dialogOpen = true;
     logs = [];
     result = null;
-    addLog("보정 시작 요청");
+    addStatusLog("calibration_start_requested");
 
     if (state.pirMotion) {
-      finishWithError("PIR 움직임이 감지되어 보정을 시작할 수 없습니다.");
+      finishWithError("calibration_pir_active");
       return;
     }
 
     const activeTargets = state.targets.filter((target) => target.active);
     if (activeTargets.length === 0) {
-      finishWithError("감지된 타겟이 없어 보정을 시작할 수 없습니다.");
+      finishWithError("calibration_no_target");
       return;
     }
     if (activeTargets.length > 1) {
-      finishWithError("타겟이 여러 개 감지되어 보정을 시작할 수 없습니다.");
+      finishWithError("calibration_multiple_targets");
       return;
     }
     if ((config.calibrationZones || []).length >= MAX_CALIBRATION_ZONES) {
-      finishWithError(`오탐 보정 구역은 최대 ${MAX_CALIBRATION_ZONES}개까지 저장할 수 있습니다.`);
+      finishWithError("calibration_max_zones_reached");
       return;
     }
 
     run = { startedAt: Date.now(), samples: [] };
-    addLog("PIR 조건 통과");
-    addLog("타겟 샘플 수집 시작");
-    setStatus("오탐 보정을 시작했습니다.", "warn");
+    addStatusLog("calibration_pir_passed");
+    addStatusLog("calibration_sample_collection_started");
+    setCalibrationStatus("calibration_started", "warn");
   }
 
   function stop(reason: string, tone: "warn" | "error"): void {
@@ -81,7 +113,7 @@ export function createCalibrationRun({
     addLog(reason);
     run = null;
     result = {
-      title: tone === "error" ? "보정 실패" : "보정 중지",
+      title: tone === "error" ? statusMessages().failureTitle : statusMessages().stoppedTitle,
       tone,
       createdCount: 0,
       reason,
@@ -96,7 +128,7 @@ export function createCalibrationRun({
     const state = getState();
     if (!run || !state || !config) return;
     if (state.pirMotion) {
-      stop("PIR 움직임이 감지되어 보정을 취소했습니다.", "error");
+      stop(statusMessages().pirCancelled, "error");
       return;
     }
 
@@ -108,10 +140,10 @@ export function createCalibrationRun({
       const samples = [...run.samples, { x: target.x, y: target.y, speed }];
       run = { ...run, samples };
       if (samples.length === 1 || samples.length % 10 === 0) {
-        addLog(`샘플 수집: ${samples.length}개`);
+        addLog(`samples=${samples.length}`);
       }
     } else if (activeTargets.length > 1) {
-      stop("타겟이 여러 개 감지되어 보정을 취소했습니다.", "error");
+      stop(statusMessage("calibration_multiple_targets_cancelled"), "error");
       return;
     }
 
@@ -122,12 +154,12 @@ export function createCalibrationRun({
       run.samples.length >= CALIBRATION_MIN_SAMPLES &&
       currentMetrics.acceptedBy !== "none"
     ) {
-      addLog(`보정 기준 통과: ${currentMetrics.acceptedBy}`);
+      addStatusLog("calibration_score_accepted", { acceptedBy: currentMetrics.acceptedBy });
       apply(currentMetrics);
       return;
     }
     if (elapsed >= CALIBRATION_MAX_MS) {
-      stop("반복 감지 영역이 너무 넓거나 불안정해 보정을 만들지 않았습니다.", "error");
+      stop(statusMessage("calibration_timeout"), "error");
     }
   }
 
@@ -137,16 +169,16 @@ export function createCalibrationRun({
     const zone = calibrationZoneFromSamples(run.samples, config.calibrationZones || []);
     run = null;
     if (!zone) {
-      addLog("오탐 보정 후보 구역 생성 실패");
+      addLog(statusMessages().candidateCreateFailedLog);
       result = {
-        title: "보정 실패",
+        title: statusMessages().failureTitle,
         tone: "error",
         createdCount: 0,
-        reason: "오탐 보정 후보를 만들지 못했습니다.",
+        reason: statusMessage("calibration_candidate_failed"),
         metrics: currentMetrics,
         logs: [...logs]
       };
-      setStatus("오탐 보정 후보를 만들지 못했습니다.", "error");
+      setCalibrationStatus("calibration_candidate_failed", "error");
       return;
     }
 
@@ -155,25 +187,26 @@ export function createCalibrationRun({
       calibrationZones: [...(current.calibrationZones || []), zone]
     }));
     result = {
-      title: "보정 완료",
+      title: statusMessages().successTitle,
       tone: "ok",
       createdCount: 1,
       reason:
         currentMetrics.acceptedBy === "score"
-          ? "안정도 점수 기준을 통과했습니다."
-          : "반복 감지 영역 기준을 통과했습니다.",
+          ? statusMessages().successByScore
+          : statusMessages().successByRepeat,
       metrics: currentMetrics,
-      logs: [...logs, `${zone.id} 구역 생성`]
+      logs: [...logs, statusMessages().zoneCreated(zone.id)]
     };
     selectZone(zone.id);
-    setStatus(`오탐 보정 구역을 저장했습니다. 안정도 ${Math.round(currentMetrics.score)}점`, "ok");
+    setCalibrationStatus("calibration_saved", "ok", { score: Math.round(currentMetrics.score), zoneId: zone.id });
   }
 
-  function finishWithError(reason: string): void {
+  function finishWithError(code: CalibrationStatusCode, detail: CalibrationStatusDetail = {}): void {
+    const reason = statusMessage(code, detail);
     addLog(reason);
     run = null;
     result = {
-      title: "보정 실패",
+      title: statusMessages().failureTitle,
       tone: "error",
       createdCount: 0,
       reason,
@@ -182,48 +215,110 @@ export function createCalibrationRun({
     setStatus(reason, "error");
   }
 
+  function setCalibrationStatus(code: CalibrationStatusCode, tone: StatusTone, detail: CalibrationStatusDetail = {}): void {
+    setStatus(statusMessage(code, detail), tone);
+  }
+
+  function addStatusLog(code: CalibrationStatusCode, detail: CalibrationStatusDetail = {}): void {
+    addLog(statusMessage(code, detail));
+  }
+
   function addLog(message: string): void {
     const time = new Date().toLocaleTimeString();
     logs = [...logs, `[${time}] ${message}`].slice(-40);
+  }
+
+  function statusMessages() {
+    return getMessages().zones.calibrationStatus;
+  }
+
+  function statusMessage(code: CalibrationStatusCode, detail: CalibrationStatusDetail = {}): string {
+    const text = statusMessages();
+    switch (code) {
+      case "calibration_start_requested":
+        return text.startRequested;
+      case "calibration_pir_passed":
+        return text.pirPassed;
+      case "calibration_sample_collection_started":
+        return text.sampleCollectionStarted;
+      case "calibration_started":
+        return text.started;
+      case "calibration_pir_active":
+        return getMessages().zones.calibrationPirActiveCannotStart;
+      case "calibration_no_target":
+        return text.noTarget;
+      case "calibration_multiple_targets":
+        return text.multipleTargets;
+      case "calibration_max_zones_reached":
+        return getMessages().zones.calibrationMaxZonesReached(MAX_CALIBRATION_ZONES);
+      case "calibration_multiple_targets_cancelled":
+        return text.multipleTargetsCancelled;
+      case "calibration_timeout":
+        return text.timeout;
+      case "calibration_candidate_failed":
+        return text.candidateCreateFailed;
+      case "calibration_score_accepted":
+        return text.scoreAccepted(detail.acceptedBy ?? "none");
+      case "calibration_saved":
+        return text.saved(detail.score ?? 0);
+      case "calibration_running":
+        return text.running(detail.elapsedSeconds ?? 0, detail.maxSeconds ?? Math.ceil(CALIBRATION_MAX_MS / 1000));
+      case "calibration_waiting":
+        return text.waiting;
+      case "calibration_waiting_for_target_sample":
+        return text.waitingForTargetSample;
+      case "calibration_collecting_samples":
+        return text.collectingSamples;
+      case "calibration_analyzing_stability":
+        return text.analyzingStability;
+      case "calibration_ready_to_create":
+        return text.readyToCreate;
+    }
   }
 
   function statusText(): string {
     const config = getConfig();
     const state = getState();
     const calibrationZoneCount = getCalibrationZoneCount();
-    if (!config) return "기기 연결 후 사용할 수 있습니다.";
+    if (!config) return getMessages().zones.calibrationUnavailableNoDevice;
     if (run) {
       const elapsed = Math.floor((Date.now() - run.startedAt) / 1000);
-      return `안정도 분석 중입니다. ${elapsed}s / 최대 ${Math.ceil(CALIBRATION_MAX_MS / 1000)}s`;
+      return statusMessage("calibration_running", {
+        elapsedSeconds: elapsed,
+        maxSeconds: Math.ceil(CALIBRATION_MAX_MS / 1000)
+      });
     }
-    if (state?.pirMotion) return "PIR 움직임이 감지되어 시작할 수 없습니다.";
+    if (state?.pirMotion) return statusMessage("calibration_pir_active");
     if (calibrationZoneCount >= MAX_CALIBRATION_ZONES) {
-      return `오탐 보정 구역은 최대 ${MAX_CALIBRATION_ZONES}개까지 저장할 수 있습니다.`;
+      return getMessages().zones.calibrationMaxZonesReached(MAX_CALIBRATION_ZONES);
     }
-    return `저장된 보정 구역 ${calibrationZoneCount}/${MAX_CALIBRATION_ZONES}`;
+    return getMessages().zones.calibrationSavedCount(calibrationZoneCount, MAX_CALIBRATION_ZONES);
   }
 
   function progressText(currentMetrics: CalibrationMetrics | undefined): string {
     if (result) return result.title;
-    if (!run) return "대기 중";
-    if (!currentMetrics || currentMetrics.samples === 0) return "타겟 샘플 대기 중";
-    if (currentMetrics.samples < CALIBRATION_MIN_SAMPLES) return "샘플 수집 중";
-    if (currentMetrics.acceptedBy === "none") return "안정도 분석 중";
-    return "보정 구역 생성 준비 완료";
+    if (!run) return statusMessage("calibration_waiting");
+    if (!currentMetrics || currentMetrics.samples === 0) return statusMessage("calibration_waiting_for_target_sample");
+    if (currentMetrics.samples < CALIBRATION_MIN_SAMPLES) return statusMessage("calibration_collecting_samples");
+    if (currentMetrics.acceptedBy === "none") return statusMessage("calibration_analyzing_stability");
+    return statusMessage("calibration_ready_to_create");
   }
 
   function workItems(currentMetrics: CalibrationMetrics | undefined): string[] {
     const state = getState();
-    if (!run && !result) return ["보정 작업 대기 중"];
+    const text = statusMessages();
+    if (!run && !result) return [text.waitingWork];
     const elapsed = run ? Math.floor((Date.now() - run.startedAt) / 1000) : null;
     return [
-      `PIR 상태: ${state?.pirMotion ? "움직임 감지됨" : "움직임 없음"}`,
-      elapsed === null ? "수집 시간: 종료됨" : `수집 시간: ${elapsed}s / 최소 ${Math.ceil(CALIBRATION_MIN_MS / 1000)}s`,
-      `샘플: ${currentMetrics?.samples ?? 0} / 최소 ${CALIBRATION_MIN_SAMPLES}`,
-      `사용 샘플: ${currentMetrics?.usedSamples ?? 0}`,
-      `제외 샘플: ${currentMetrics?.outliers ?? 0}`,
-      `안정도 점수: ${Math.round(currentMetrics?.score ?? 0)} / ${CALIBRATION_SCORE_THRESHOLD}`,
-      `판정 기준: ${currentMetrics?.acceptedBy ?? "none"}`
+      text.pirState(Boolean(state?.pirMotion)),
+      elapsed === null
+        ? text.collectionFinished
+        : text.collectionTime(elapsed, Math.ceil(CALIBRATION_MIN_MS / 1000)),
+      text.samples(currentMetrics?.samples ?? 0, CALIBRATION_MIN_SAMPLES),
+      text.usedSamples(currentMetrics?.usedSamples ?? 0),
+      text.outliers(currentMetrics?.outliers ?? 0),
+      text.score(Math.round(currentMetrics?.score ?? 0), CALIBRATION_SCORE_THRESHOLD),
+      text.acceptedBy(currentMetrics?.acceptedBy ?? "none")
     ];
   }
 

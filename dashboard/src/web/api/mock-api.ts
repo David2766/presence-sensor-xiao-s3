@@ -134,6 +134,7 @@ function createDemoStats(): WebDeviceStats {
 const defaultConfig: WebDeviceConfig = {
   version: 1,
   integrationMode: "unknown",
+  legacyPresenceFallback: false,
   zones: [
     {
       id: "zone_1",
@@ -273,7 +274,12 @@ export const mockApi: DeviceApi = {
       },
       api: {
         connected: true,
-        warning: false
+        warning: false,
+        statusInfo: {
+          code: "api_client_connected",
+          severity: "info",
+          detail: {}
+        }
       },
       boot: {
         initialGuardActive: Math.round((Date.now() - startTime) / 1000) < 60,
@@ -443,7 +449,14 @@ export const mockApi: DeviceApi = {
     return {
       ok: true,
       message: "mock_handoff_started",
-      waitSeconds: 1
+      waitSeconds: 1,
+      statusInfo: {
+        code: "ha_handoff_started",
+        severity: "info",
+        detail: {
+          waitSeconds: 1
+        }
+      }
     };
   }
 };

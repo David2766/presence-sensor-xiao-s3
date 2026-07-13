@@ -1,8 +1,10 @@
 <script lang="ts">
   import EditorToolbar from "./EditorToolbar.svelte";
+  import type { Messages } from "../i18n/types";
   import type { SaveState, WebZone } from "../types";
 
   type Props = {
+    messages: Messages;
     canUndo: boolean;
     canRedo: boolean;
     selectedZone: WebZone | null;
@@ -20,6 +22,7 @@
   };
 
   let {
+    messages,
     canUndo,
     canRedo,
     selectedZone,
@@ -35,20 +38,29 @@
     onDeleteSelected,
     onToggleDebug
   }: Props = $props();
+
+  const text = $derived(messages.zones);
 </script>
 
-<EditorToolbar ariaLabel="구역 편집 도구" label={selectedLabel}>
-  <button type="button" disabled={!canUndo} title="되돌리기" onclick={onUndo}>↶</button>
-  <button type="button" disabled={!canRedo} title="다시 실행" onclick={onRedo}>↷</button>
-  <button type="button" disabled={!selectedZone || selectedZone.shape === "rect"} title="사각형으로 정리" onclick={onConvertToRect}>
-    사각형
+<EditorToolbar ariaLabel={text.toolbarAria} label={selectedLabel}>
+  <button type="button" disabled={!canUndo} title={text.undo} onclick={onUndo}>↶</button>
+  <button type="button" disabled={!canRedo} title={text.redo} onclick={onRedo}>↷</button>
+  <button
+    type="button"
+    disabled={!selectedZone || selectedZone.shape === "rect" || selectedZone.type === "exit"}
+    title={text.convertToRect}
+    onclick={onConvertToRect}
+  >
+    {text.rect}
   </button>
-  <button type="button" disabled={!selectedZone && !hasSelectedCalibrationZone} title="선택 항목 삭제" onclick={onDeleteSelected}>삭제</button>
+  <button type="button" disabled={!selectedZone && !hasSelectedCalibrationZone} title={text.deleteSelected} onclick={onDeleteSelected}>
+    {text.delete}
+  </button>
   <button type="button" data-active={debugMode ? "true" : "false"} aria-pressed={debugMode} onclick={onToggleDebug}>Debug</button>
 </EditorToolbar>
 
 <div class="map-toolbar-status" data-map-toolbar>
   <span class="save-status" data-save-state={saveState}>{saveStatusText}</span>
-  <span>마지막 업데이트</span>
+  <span>{text.lastUpdated}</span>
   <strong data-updated-at>{updatedText}</strong>
 </div>

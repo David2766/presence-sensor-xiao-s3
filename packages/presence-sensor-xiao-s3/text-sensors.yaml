@@ -36,6 +36,13 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 1s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[0];
+        if (!track.valid) return {"미감지"};
+        if (strcmp(track.direction, "approaching") == 0) return {"접근"};
+        if (strcmp(track.direction, "moving_away") == 0) return {"멀어짐"};
+        return {"정지"};
+      }
       if (id(target_1_direction_raw).state == "NA" || id(target_1_filtered) || !id(target_1_range_valid)) {
         return {"미감지"};
       }
@@ -46,6 +53,13 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 1s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[1];
+        if (!track.valid) return {"미감지"};
+        if (strcmp(track.direction, "approaching") == 0) return {"접근"};
+        if (strcmp(track.direction, "moving_away") == 0) return {"멀어짐"};
+        return {"정지"};
+      }
       if (id(target_2_direction_raw).state == "NA" || id(target_2_filtered) || !id(target_2_range_valid)) {
         return {"미감지"};
       }
@@ -56,6 +70,13 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 1s
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        const auto &track = id(radar_api).tracker_output().tracks[2];
+        if (!track.valid) return {"미감지"};
+        if (strcmp(track.direction, "approaching") == 0) return {"접근"};
+        if (strcmp(track.direction, "moving_away") == 0) return {"멀어짐"};
+        return {"정지"};
+      }
       if (id(target_3_direction_raw).state == "NA" || id(target_3_filtered) || !id(target_3_range_valid)) {
         return {"미감지"};
       }

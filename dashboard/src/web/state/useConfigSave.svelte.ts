@@ -1,88 +1,85 @@
-import { SAVE_DEBOUNCE_MS } from "../../core/constants";
 import { stripPlaceholders } from "../../core/zones";
+import type { DeviceStorageSaveStateLabels } from "./device-storage-status";
 import type { DeviceApi, SaveState, WebDeviceConfig } from "../types";
+import { useDeviceStorageStatus } from "./useDeviceStorageStatus.svelte";
 
 interface ConfigSaveOptions {
   api: DeviceApi;
   getConfig: () => WebDeviceConfig | null;
   setStatus: (message: string, tone: "ok" | "warn" | "error") => void;
   errorMessage: (error: unknown) => string;
+  getSaveStatusLabels: () => DeviceStorageSaveStateLabels;
+  savedMessage: () => string;
+  saveFailedMessage: (error: string) => string;
 }
 
-export function createConfigSave({ api, getConfig, setStatus, errorMessage }: ConfigSaveOptions) {
-  let saveTimer = 0;
-  let saveInFlight = false;
-  let saveQueued = false;
+export function createConfigSave({
+  api,
+  getConfig,
+  setStatus,
+  errorMessage,
+  getSaveStatusLabels,
+  savedMessage,
+  saveFailedMessage
+}: ConfigSaveOptions) {
   let saveInFlightPromise: Promise<void> | null = null;
+  let dirtyVersion = 0;
+  let savedVersion = 0;
   let saveState = $state<SaveState>("idle");
+  const storageStatus = useDeviceStorageStatus("config", getSaveStatusLabels);
 
-  function scheduleSave(): void {
-    if (saveInFlight) {
-      saveQueued = true;
+  function markPending(): void {
+    dirtyVersion += 1;
+    if (saveInFlightPromise) {
       saveState = "queued";
       return;
     }
-    window.clearTimeout(saveTimer);
     saveState = "pending";
-    saveTimer = window.setTimeout(() => {
-      void saveConfigNow();
-    }, SAVE_DEBOUNCE_MS);
   }
 
   async function saveConfigNow(): Promise<void> {
-    window.clearTimeout(saveTimer);
     if (saveInFlightPromise) {
-      saveQueued = true;
-      saveState = "queued";
       await saveInFlightPromise;
-      if (saveQueued) await saveConfigNow();
       return;
     }
 
     const config = getConfig();
     if (!config) return;
-    saveInFlight = true;
-    saveQueued = false;
+    if (dirtyVersion === savedVersion) dirtyVersion += 1;
+    const versionToSave = dirtyVersion;
     saveState = "saving";
     saveInFlightPromise = (async () => {
       try {
         await api.saveConfig(stripPlaceholders(config));
-        saveState = "saved";
-        setStatus("설정 저장 완료", "ok");
+        savedVersion = Math.max(savedVersion, versionToSave);
+        saveState = dirtyVersion > savedVersion ? "pending" : "saved";
+        setStatus(savedMessage(), "ok");
       } catch (error) {
         saveState = "error";
-        setStatus(`설정을 저장하지 못했습니다. ${errorMessage(error)}`, "error");
+        setStatus(saveFailedMessage(errorMessage(error)), "error");
       } finally {
-        saveInFlight = false;
         saveInFlightPromise = null;
       }
     })();
     await saveInFlightPromise;
-    if (saveQueued) await saveConfigNow();
   }
 
   function destroy(): void {
-    window.clearTimeout(saveTimer);
+    storageStatus.destroy();
   }
 
   return {
     get saveState() {
-      return saveState;
+      return storageStatus.saveState(saveState);
     },
     get saveStatusText() {
-      return saveStateLabel(saveState);
+      return storageStatus.saveStatusText(saveState);
     },
-    scheduleSave,
+    get hasPendingChanges() {
+      return dirtyVersion > savedVersion;
+    },
+    markPending,
     saveConfigNow,
     destroy
   };
-}
-
-function saveStateLabel(state: SaveState): string {
-  if (state === "pending") return "저장 대기";
-  if (state === "saving") return "저장 중";
-  if (state === "queued") return "추가 저장 대기";
-  if (state === "saved") return "저장 완료";
-  if (state === "error") return "저장 실패";
-  return "변경 없음";
 }

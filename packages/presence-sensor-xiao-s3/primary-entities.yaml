@@ -18,6 +18,10 @@ binary_sensor:
     id: moving_target_filtered
     device_class: motion
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled() &&
+          !id(target_1_filter_blocked) && !id(target_2_filter_blocked) && !id(target_3_filter_blocked)) {
+        return id(radar_api).tracker_output().moving_track_count > 0;
+      }
       return
         (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) > id(dir_stationary_speed)) ||
         (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) > id(dir_stationary_speed)) ||
@@ -30,6 +34,10 @@ binary_sensor:
     id: still_target_filtered
     device_class: occupancy
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled() &&
+          !id(target_1_filter_blocked) && !id(target_2_filter_blocked) && !id(target_3_filter_blocked)) {
+        return id(radar_api).tracker_output().still_track_count > 0;
+      }
       return
         (id(target_1_direction_raw).state != "NA" && !id(target_1_filtered) && id(target_1_range_valid) && fabsf(id(target_1_speed_raw).state) <= id(dir_stationary_speed)) ||
         (id(target_2_direction_raw).state != "NA" && !id(target_2_filtered) && id(target_2_range_valid) && fabsf(id(target_2_speed_raw).state) <= id(dir_stationary_speed)) ||
@@ -98,6 +106,11 @@ sensor:
     update_interval: 500ms
     accuracy_decimals: 0
     lambda: |-
+      if (id(radar_api).tracker_assist_presence_enabled()) {
+        if (id(target_1_filter_blocked) || id(target_2_filter_blocked) || id(target_3_filter_blocked)) return 0;
+        const auto &tracker = id(radar_api).tracker_output();
+        return tracker.confirmed_track_count + tracker.coasting_track_count;
+      }
       return id(cnt_stable_total);
 
   - platform: template

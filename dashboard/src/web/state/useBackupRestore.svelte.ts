@@ -1,5 +1,4 @@
 import {
-  backupValidationMessage,
   createConfigBackup,
   validateConfigBackupText,
   type BackupFloorplanData,
@@ -7,7 +6,11 @@ import {
   type BackupIssue,
   type BackupValidationResult
 } from "../../core/config-backup";
+import { backupIssueMessage } from "../i18n/backup-issues";
+import type { Messages } from "../i18n/types";
+import { fallbackErrorMessage } from "../api/api-message";
 import type { WebDeviceConfig, WebDeviceStats } from "../types";
+import { downloadBlob } from "../utils/download";
 
 export type BackupRestoreStage = "idle" | "blocked" | "warning" | "ready" | "importing" | "imported" | "exported" | "error";
 export type BackupRestoreProgressStepId = "config" | "floorplan" | "stats";
@@ -29,6 +32,7 @@ interface BackupRestoreOptions {
   loadStatsBackup?: () => Promise<WebDeviceStats | null>;
   applyStatsBackup?: (stats: WebDeviceStats, onProgress?: (progress: { loaded: number; total: number; percent: number }) => void) => Promise<void>;
   getDeviceInfo: () => BackupDeviceInfo;
+  getMessages: () => Messages;
   setStatus: (message: string, tone: "ok" | "warn" | "error") => void;
   errorMessage: (error: unknown) => string;
 }
@@ -41,6 +45,7 @@ export function createBackupRestore({
   loadStatsBackup,
   applyStatsBackup,
   getDeviceInfo,
+  getMessages,
   setStatus,
   errorMessage
 }: BackupRestoreOptions) {
@@ -60,10 +65,14 @@ export function createBackupRestore({
   let progressPercent = $state(0);
   let currentProgressStep = $state<BackupRestoreProgressStepId | "import">("import");
 
+  function text() {
+    return getMessages().backup;
+  }
+
   async function exportBackup(): Promise<void> {
     const config = getConfig();
     if (!config) {
-      setStatus("내보낼 설정이 아직 준비되지 않았습니다.", "warn");
+      setStatus(text().exportConfigNotReady, "warn");
       return;
     }
 
@@ -73,17 +82,11 @@ export function createBackupRestore({
       const backup = await createConfigBackup(config, getDeviceInfo(), floorplan ?? undefined, stats ?? undefined);
       const backupText = `${JSON.stringify(backup, null, 2)}\n`;
       const blob = new Blob([backupText], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `radar-zone-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      const downloadFilename = `radar-zone-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      downloadBlob(blob, downloadFilename);
       stage = "exported";
-      filename = link.download;
-      message = "백업 파일을 내보냈습니다.";
+      filename = downloadFilename;
+      message = text().exportDoneMessage;
       errors = [];
       warnings = [];
       summary = summarizeBackupConfig(config, floorplan, stats);
@@ -93,11 +96,11 @@ export function createBackupRestore({
       importZones = true;
       importFloorplan = Boolean(floorplan);
       importStats = Boolean(stats);
-      setStatus("백업 파일을 만들었습니다.", "ok");
+      setStatus(text().exportDoneStatus, "ok");
     } catch (error) {
       stage = "error";
       filename = "";
-      message = `백업을 만들지 못했습니다. ${errorMessage(error)}`;
+      message = text().exportFailed(errorMessage(error));
       errors = [{ path: "export", message }];
       warnings = [];
       summary = null;
@@ -112,11 +115,11 @@ export function createBackupRestore({
     filename = file.name;
     if (!file.name.toLowerCase().endsWith(".json")) {
       stage = "blocked";
-      message = "JSON 파일만 가져올 수 있습니다.";
+      message = text().importJsonOnly;
       errors = [
         {
           path: "$file",
-          message: "선택한 파일의 확장자가 .json이 아닙니다.",
+          message: text().importJsonExtensionError,
           detail: file.name
         }
       ];
@@ -125,8 +128,8 @@ export function createBackupRestore({
     }
 
     try {
-      const text = await file.text();
-      const result = await validateConfigBackupText(text);
+      const fileText = await file.text();
+      const result = await validateConfigBackupText(fileText);
       errors = result.errors;
       warnings = result.warnings;
       summary = result.summary;
@@ -139,24 +142,24 @@ export function createBackupRestore({
 
       if (errors.length > 0 || !pendingConfig) {
         stage = "blocked";
-        message = "백업 파일을 가져올 수 없습니다. 아래 항목을 확인해 주세요.";
-        setStatus("백업 검증 실패", "error");
+        message = text().importBlockedMessage;
+        setStatus(text().importValidationFailedStatus, "error");
         return;
       }
 
       if (warnings.length > 0) {
         stage = "warning";
-        message = "백업 파일에 확인이 필요한 경고가 있습니다.";
-        setStatus("백업 경고 확인 필요", "warn");
+        message = text().importWarningMessage;
+        setStatus(text().importWarningStatus, "warn");
         return;
       }
 
       stage = "ready";
-      message = "백업 파일 검증이 완료되었습니다. 현재 설정을 덮어쓸 수 있습니다.";
-      setStatus("백업 검증 완료", "warn");
+      message = text().importReadyMessage;
+      setStatus(text().importReadyStatus, "warn");
     } catch (error) {
       stage = "error";
-      message = `백업 파일을 읽지 못했습니다. ${errorMessage(error)}`;
+      message = text().importReadFailed(fallbackErrorMessage(error));
       errors = [{ path: "$file", message }];
       setStatus(message, "error");
     }
@@ -168,39 +171,39 @@ export function createBackupRestore({
       stage = "importing";
       errors = [];
       warnings = [];
-      message = "백업 복원을 준비하고 있습니다.";
+      message = text().importPreparing;
       currentProgressStep = "import";
       initializeProgressSteps();
-      setStatus("백업 복원 중", "warn");
+      setStatus(text().importRunningStatus, "warn");
 
       if (importZones) {
-        message = "구역 설정과 오탐 보정 구역을 장치에 저장하는 중입니다.";
+        message = text().importConfigRunning;
         activateProgressStep("config", message);
         await applyConfig(pendingConfig);
-        completeProgressStep("config", "설정 저장 완료");
+        completeProgressStep("config", text().importConfigDone);
       }
       if (importFloorplan && pendingFloorplan && applyFloorplanBackup) {
         message = pendingFloorplan.image
-          ? "평면도 설정과 이미지를 장치에 복원하는 중입니다."
-          : "평면도 설정을 장치에 복원하는 중입니다.";
+          ? text().importFloorplanWithImageRunning
+          : text().importFloorplanConfigRunning;
         activateProgressStep("floorplan", message);
         await applyFloorplanBackup(pendingFloorplan);
-        completeProgressStep("floorplan", "평면도 복원 완료");
+        completeProgressStep("floorplan", text().importFloorplanDone);
       }
       if (importStats && pendingStats && applyStatsBackup) {
-        message = "통계 데이터와 히트맵 기록을 장치에 복원하는 중입니다.";
+        message = text().importStatsRunning;
         activateProgressStep("stats", message);
         await applyStatsBackup(pendingStats, (progress) => {
-          updateProgressStep("stats", "active", `업로드 중 ${progress.percent}%`, progress.percent);
+          updateProgressStep("stats", "active", text().importStatsUploading(progress.percent), progress.percent);
           updateOverallProgress("stats", progress.percent);
         });
-        completeProgressStep("stats", "통계 복원 완료");
+        completeProgressStep("stats", text().importStatsDone);
       }
       stage = "imported";
-      message =
-        [importZones ? "설정" : "", importFloorplan ? "평면도" : "", importStats ? "통계" : ""]
+      message = text().importDoneMessage(
+        [importZones ? text().itemSettings : "", importFloorplan ? text().itemFloorplan : "", importStats ? text().itemStats : ""]
           .filter(Boolean)
-          .join(", ") + " 데이터를 가져왔습니다.";
+      );
       errors = [];
       warnings = [];
       pendingConfig = null;
@@ -209,10 +212,10 @@ export function createBackupRestore({
       importZones = true;
       importFloorplan = false;
       importStats = false;
-      setStatus("백업 복원 완료", "ok");
+      setStatus(text().importDoneStatus, "ok");
     } catch (error) {
       stage = "error";
-      message = `백업 복원 중 오류가 발생했습니다. ${errorMessage(error)}`;
+      message = text().importFailed(errorMessage(error));
       if (currentProgressStep !== "import") {
         updateProgressStep(currentProgressStep, "error", message, progressSteps.find((step) => step.id === currentProgressStep)?.percent ?? 0);
       }
@@ -223,7 +226,7 @@ export function createBackupRestore({
 
   function cancelImport(): void {
     resetImportState();
-    setStatus("백업 가져오기를 취소했습니다.", "warn");
+    setStatus(text().importCancelledStatus, "warn");
   }
 
   function resetImportState(): void {
@@ -257,7 +260,7 @@ export function createBackupRestore({
   }
 
   function issueText(issue: BackupIssue): string {
-    return backupValidationMessage(issue);
+    return backupIssueMessage(getMessages(), issue);
   }
 
   function initializeProgressSteps(): void {
@@ -265,27 +268,27 @@ export function createBackupRestore({
       importZones
         ? {
             id: "config",
-            label: "설정",
+            label: text().progressConfig,
             status: "pending",
-            detail: "대기 중",
+            detail: text().progressWaiting,
             percent: 0
           }
         : null,
       importFloorplan
         ? {
             id: "floorplan",
-            label: "평면도",
+            label: text().progressFloorplan,
             status: "pending",
-            detail: "대기 중",
+            detail: text().progressWaiting,
             percent: 0
           }
         : null,
       importStats
         ? {
             id: "stats",
-            label: "통계",
+            label: text().progressStats,
             status: "pending",
-            detail: "대기 중",
+            detail: text().progressWaiting,
             percent: 0
           }
         : null

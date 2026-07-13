@@ -6,6 +6,8 @@
     radarZoneToFloorplanPolygon
   } from "../../core/floorplan/radar-floorplan-transform";
   import { LD2450_FOV_DEGREES, radarViewportRangeX } from "../../core/radar-math";
+  import { clampRadarEditZonePoint } from "../canvas/radar-view";
+  import { exitLineFromZone } from "../zone-geometry";
 
   let {
     transformStyle = "",
@@ -62,14 +64,6 @@
     return Math.max(0.95, Math.min(1.05, Number(scalePercent) / 100 || 1));
   }
 
-  function pxPerMmX() {
-    return scaleEstimate ? (1 / scaleEstimate.mmPerPxX) * scaleFactor() : 0;
-  }
-
-  function pxPerMmY() {
-    return scaleEstimate ? (1 / scaleEstimate.mmPerPxY) * scaleFactor() : 0;
-  }
-
   function transformOptions() {
     if (!scaleEstimate) return null;
     return {
@@ -79,8 +73,17 @@
     };
   }
 
-  function radarRangeX() {
-    return Math.max(DEFAULT_CARD_CONFIG.range_x, radarViewportRangeX(rangeY, fovDegrees));
+  function radarEditBounds() {
+    const editRangeY = Number.isFinite(rangeY) && rangeY > 0 ? Number(rangeY) : DEFAULT_CARD_CONFIG.range_y;
+    const editFovDegrees = Number.isFinite(fovDegrees) && fovDegrees > 0 ? Number(fovDegrees) : LD2450_FOV_DEGREES;
+    return {
+      rangeX: Math.max(DEFAULT_CARD_CONFIG.range_x, radarViewportRangeX(editRangeY, editFovDegrees)),
+      rangeY: editRangeY
+    };
+  }
+
+  function radarEditPointFromImagePoint(point, options) {
+    return clampRadarEditZonePoint(floorplanPxToRadarPoint(point, options), radarEditBounds());
   }
 
   function imagePointFromEvent(event) {
@@ -198,6 +201,16 @@
     }));
   }
 
+  function exitLinePoints(zone) {
+    const options = transformOptions();
+    if (!options) return null;
+    const line = exitLineFromZone(zone);
+    return {
+      start: radarPointToFloorplanPx(line.start, options),
+      end: radarPointToFloorplanPx(line.end, options)
+    };
+  }
+
   function isZoneEditingSource(source) {
     return editableZoneSource === source;
   }
@@ -214,6 +227,7 @@
     if (!isZoneEditable(source)) return;
     const options = transformOptions();
     if (!options) return;
+    const startRadarPoint = radarEditPointFromImagePoint(imagePointFromEvent(event), options);
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -223,7 +237,7 @@
       pointerId: event.pointerId,
       source,
       zone,
-      startRadarPoint: floorplanPxToRadarPoint(imagePointFromEvent(event), options)
+      startRadarPoint
     };
   }
 
@@ -264,10 +278,11 @@
     if (!isZoneEditable(source)) return;
     const options = transformOptions();
     if (!options) return;
+    const radarPoint = radarEditPointFromImagePoint(imagePointFromEvent(event), options);
     event.preventDefault();
     event.stopPropagation();
     onSelectZone?.(zone.id, -1);
-    onZoneEdgeClick?.(source, zone, edgeIndex, floorplanPxToRadarPoint(imagePointFromEvent(event), options));
+    onZoneEdgeClick?.(source, zone, edgeIndex, radarPoint);
   }
 
   function handleZoneEdgeKeydown(event, zone, source, edge) {
@@ -275,13 +290,14 @@
     if (!isZoneEditable(source)) return;
     const options = transformOptions();
     if (!options) return;
+    const radarPoint = radarEditPointFromImagePoint({
+      x: (edge.start.x + edge.end.x) / 2,
+      y: (edge.start.y + edge.end.y) / 2
+    }, options);
     event.preventDefault();
     event.stopPropagation();
     onSelectZone?.(zone.id, -1);
-    onZoneEdgeClick?.(source, zone, edge.index, floorplanPxToRadarPoint({
-      x: (edge.start.x + edge.end.x) / 2,
-      y: (edge.start.y + edge.end.y) / 2
-    }, options));
+    onZoneEdgeClick?.(source, zone, edge.index, radarPoint);
   }
 
   function renderableTargets() {
@@ -402,7 +418,7 @@
     if (drag.type === "zone-move" || drag.type === "zone-point") {
       const options = transformOptions();
       if (!options) return;
-      const radarPoint = floorplanPxToRadarPoint(point, options);
+      const radarPoint = radarEditPointFromImagePoint(point, options);
       if (drag.type === "zone-move") {
         onZoneMove?.(drag.source, drag.zone, drag.startRadarPoint, radarPoint);
       } else {
@@ -452,10 +468,6 @@
     return `${front.x},${front.y} ${left.x},${left.y} ${right.x},${right.y}`;
   }
 
-  function orientation(a, b, c) {
-    return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
-  }
-
   function onSegment(a, b, c) {
     return (
       Math.min(a.x, c.x) <= b.x + 0.001 &&
@@ -463,18 +475,6 @@
       Math.min(a.y, c.y) <= b.y + 0.001 &&
       b.y <= Math.max(a.y, c.y) + 0.001
     );
-  }
-
-  function segmentsIntersect(a, b, c, d) {
-    const o1 = orientation(a, b, c);
-    const o2 = orientation(a, b, d);
-    const o3 = orientation(c, d, a);
-    const o4 = orientation(c, d, b);
-    if (Math.abs(o1) < 0.001 && onSegment(a, c, b)) return true;
-    if (Math.abs(o2) < 0.001 && onSegment(a, d, b)) return true;
-    if (Math.abs(o3) < 0.001 && onSegment(c, a, d)) return true;
-    if (Math.abs(o4) < 0.001 && onSegment(c, b, d)) return true;
-    return (o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0);
   }
 
   function wallSegmentLine(segment) {
@@ -510,14 +510,14 @@
   }
 
   function visibleRayPolygon() {
-    if (!scaleEstimate) return "";
+    return pointList(visibleRayPoints());
+  }
+
+  function visibleRayPoints() {
+    if (!scaleEstimate) return [];
     const current = effectivePlacement();
     const origin = { x: current.originX, y: current.originY };
-    const ignored = new Set(ignoredOcclusionSegmentIds);
-    const blockingWalls = occlusionSegments
-      .filter((segment) => !isOcclusionSegmentIgnored(segment, ignored))
-      .map(wallSegmentLine)
-      .filter(Boolean);
+    const blockingWalls = activeOcclusionWallLines();
     const halfFov = fovDegrees / 2;
     const rayCount = Math.max(1, Math.ceil(fovDegrees / RADAR_VISIBILITY_RAY_STEP_DEGREES));
     const points = [origin];
@@ -530,7 +530,28 @@
       points.push(hit ?? rayEnd);
     }
 
+    return points;
+  }
+
+  function pointList(points) {
     return points.map((point) => `${point.x},${point.y}`).join(" ");
+  }
+
+  function activeOcclusionWallLines() {
+    const ignored = new Set(ignoredOcclusionSegmentIds);
+    return occlusionSegments
+      .filter((segment) => !isOcclusionSegmentIgnored(segment, ignored))
+      .map((segment) => {
+        const line = wallSegmentLine(segment);
+        return line
+          ? {
+              ...line,
+              id: segment.id,
+              occlusionKey: occlusionSegmentKey(segment)
+            }
+          : null;
+      })
+      .filter(Boolean);
   }
 
   function closestRayWallHit(origin, rayEnd, walls) {
@@ -541,10 +562,15 @@
       const distance = Math.hypot(hit.x - origin.x, hit.y - origin.y);
       if (distance < 0.5) continue;
       if (!nearest || distance < nearest.distance) {
-        nearest = { ...hit, distance };
+        nearest = {
+          ...hit,
+          distance,
+          wallId: wall.id,
+          occlusionKey: wall.occlusionKey
+        };
       }
     }
-    return nearest ? { x: nearest.x, y: nearest.y } : null;
+    return nearest;
   }
 
   function segmentIntersectionPoint(a, b, c, d) {
@@ -577,12 +603,13 @@
   {@const handle = rotateHandlePoint()}
   {@const visiblePolygon = visibleRayPolygon()}
   {@const remoteBand = remoteRangeBandPoints()}
-  {@const occlusionMaskVersion = `${ignoredOcclusionSegmentIds.join("|")}:${current.originX}:${current.originY}:${current.rotation}`}
+  {@const occlusionMaskVersion = `${ignoredOcclusionSegmentIds.join("|")}:${current.originX}:${current.originY}:${current.rotation}:${visiblePolygon}`}
   <svg
     class="floorplan-radar-placement-layer"
     data-readonly={readOnly ? "true" : "false"}
     style={transformStyle}
     viewBox={`0 0 ${imageWidth} ${imageHeight}`}
+    preserveAspectRatio="none"
     aria-label="레이더 배치 오버레이"
     role="img"
     onpointermove={updateDrag}
@@ -639,6 +666,8 @@
           <polygon
             class={`floorplan-radar-zone calibration ${isSelectedZone(zone) ? "selected" : ""}`}
             data-editable={isZoneEditable("calibration") ? "true" : "false"}
+            data-zone-id={zone.id}
+            data-zone-drag={isZoneEditable("calibration") ? "move" : undefined}
             points={zonePoints(zone)}
             role="button"
             tabindex="0"
@@ -651,6 +680,9 @@
               <circle
                 class="floorplan-radar-zone-point"
                 data-active={selectedZonePointIndex === index ? "true" : "false"}
+                data-zone-id={zone.id}
+                data-zone-drag="resize"
+                data-zone-point={index}
                 cx={point.x}
                 cy={point.y}
                 r="7"
@@ -665,44 +697,114 @@
       {/each}
       {#each zones as zone (zone.id)}
         {#if zone.points?.length}
-          <polygon
-            class={`floorplan-radar-zone ${zone.type} ${isSelectedZone(zone) ? "selected" : ""}`}
-            data-editable={isZoneEditable("zones") ? "true" : "false"}
-            points={zonePoints(zone)}
-            role="button"
-            tabindex="0"
-            aria-label="감지 구역 선택"
-            onpointerdown={(event) => beginZoneMove(event, zone, "zones")}
-            onkeydown={(event) => handleZoneKeydown(event, zone, "zones")}
-          ></polygon>
-          {#if isZoneEditable("zones") && isSelectedZone(zone)}
-            {#each zonePolygonEdges(zone) as edge}
+          {@const exitLine = zone.type === "exit" ? exitLinePoints(zone) : null}
+          {#if exitLine}
+            <line
+              class={`floorplan-radar-exit-line-display ${isSelectedZone(zone) ? "selected" : ""}`}
+              x1={exitLine.start.x}
+              y1={exitLine.start.y}
+              x2={exitLine.end.x}
+              y2={exitLine.end.y}
+            ></line>
+            <line
+              class="floorplan-radar-exit-line-hit"
+              data-editable={isZoneEditable("zones") ? "true" : "false"}
+              data-zone-id={zone.id}
+              data-zone-drag={isZoneEditable("zones") ? "move" : undefined}
+              x1={exitLine.start.x}
+              y1={exitLine.start.y}
+              x2={exitLine.end.x}
+              y2={exitLine.end.y}
+              role="button"
+              tabindex="0"
+              aria-label="퇴실 지점 선택"
+              onpointerdown={(event) => beginZoneMove(event, zone, "zones")}
+              onkeydown={(event) => handleZoneKeydown(event, zone, "zones")}
+            ></line>
+            {#if isZoneEditable("zones") && isSelectedZone(zone)}
               <line
-                class="floorplan-radar-zone-edge"
-                x1={edge.start.x}
-                y1={edge.start.y}
-                x2={edge.end.x}
-                y2={edge.end.y}
-                role="button"
-                tabindex="0"
-                aria-label="감지 구역 꼭짓점 추가"
-                onclick={(event) => handleZoneEdgeClick(event, zone, "zones", edge.index)}
-                onkeydown={(event) => handleZoneEdgeKeydown(event, zone, "zones", edge)}
+                class="floorplan-radar-exit-line-edit"
+                x1={exitLine.start.x}
+                y1={exitLine.start.y}
+                x2={exitLine.end.x}
+                y2={exitLine.end.y}
               ></line>
-            {/each}
-            {#each zonePolygonPoints(zone) as point, index}
               <circle
-                class="floorplan-radar-zone-point"
-                data-active={selectedZonePointIndex === index ? "true" : "false"}
-                cx={point.x}
-                cy={point.y}
-                r="7"
+                class="floorplan-radar-zone-point floorplan-radar-exit-line-handle"
+                data-active={selectedZonePointIndex === 0 ? "true" : "false"}
+                data-zone-id={zone.id}
+                data-zone-drag="resize"
+                data-zone-point={0}
+                cx={exitLine.start.x}
+                cy={exitLine.start.y}
+                r="8"
                 role="button"
                 tabindex="0"
-                onpointerdown={(event) => beginZonePointMove(event, zone, "zones", index)}
-                onkeydown={(event) => handleZonePointKeydown(event, zone, "zones", index)}
+                onpointerdown={(event) => beginZonePointMove(event, zone, "zones", 0)}
+                onkeydown={(event) => handleZonePointKeydown(event, zone, "zones", 0)}
               ></circle>
-            {/each}
+              <circle
+                class="floorplan-radar-zone-point floorplan-radar-exit-line-handle"
+                data-active={selectedZonePointIndex === 1 ? "true" : "false"}
+                data-zone-id={zone.id}
+                data-zone-drag="resize"
+                data-zone-point={1}
+                cx={exitLine.end.x}
+                cy={exitLine.end.y}
+                r="8"
+                role="button"
+                tabindex="0"
+                onpointerdown={(event) => beginZonePointMove(event, zone, "zones", 1)}
+                onkeydown={(event) => handleZonePointKeydown(event, zone, "zones", 1)}
+              ></circle>
+            {/if}
+          {:else}
+            <polygon
+              class={`floorplan-radar-zone ${zone.type} ${isSelectedZone(zone) ? "selected" : ""}`}
+              data-editable={isZoneEditable("zones") ? "true" : "false"}
+              data-zone-id={zone.id}
+              data-zone-drag={isZoneEditable("zones") ? "move" : undefined}
+              points={zonePoints(zone)}
+              role="button"
+              tabindex="0"
+              aria-label="감지 구역 선택"
+              onpointerdown={(event) => beginZoneMove(event, zone, "zones")}
+              onkeydown={(event) => handleZoneKeydown(event, zone, "zones")}
+            ></polygon>
+            {#if isZoneEditable("zones") && isSelectedZone(zone)}
+              {#each zonePolygonEdges(zone) as edge}
+                <line
+                  class="floorplan-radar-zone-edge"
+                  data-zone-id={zone.id}
+                  data-zone-edge={edge.index}
+                  x1={edge.start.x}
+                  y1={edge.start.y}
+                  x2={edge.end.x}
+                  y2={edge.end.y}
+                  role="button"
+                  tabindex="0"
+                  aria-label="감지 구역 꼭짓점 추가"
+                  onclick={(event) => handleZoneEdgeClick(event, zone, "zones", edge.index)}
+                  onkeydown={(event) => handleZoneEdgeKeydown(event, zone, "zones", edge)}
+                ></line>
+              {/each}
+              {#each zonePolygonPoints(zone) as point, index}
+                <circle
+                  class="floorplan-radar-zone-point"
+                  data-active={selectedZonePointIndex === index ? "true" : "false"}
+                  data-zone-id={zone.id}
+                  data-zone-drag="resize"
+                  data-zone-point={index}
+                  cx={point.x}
+                  cy={point.y}
+                  r="7"
+                  role="button"
+                  tabindex="0"
+                  onpointerdown={(event) => beginZonePointMove(event, zone, "zones", index)}
+                  onkeydown={(event) => handleZonePointKeydown(event, zone, "zones", index)}
+                ></circle>
+              {/each}
+            {/if}
           {/if}
         {/if}
       {/each}

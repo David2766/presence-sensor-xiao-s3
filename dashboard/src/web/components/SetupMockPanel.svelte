@@ -1,11 +1,13 @@
 <script lang="ts">
+  import type { Messages } from "../i18n/types";
+
   type MockNetwork = {
     ssid: string;
     rssi: number;
     locked: boolean;
   };
 
-  let { onComplete = () => {} } = $props<{ onComplete?: () => void }>();
+  let { messages, onComplete = () => {} } = $props<{ messages: Messages; onComplete?: () => void }>();
 
   const networks: MockNetwork[] = [
     { ssid: "TEST_SSID", rssi: -31, locked: true },
@@ -26,7 +28,7 @@
   let ssidInput = $state("");
   let password = $state("");
   let expanded = $state(false);
-  let message = $state("주변 Wi-Fi 목록을 불러왔습니다.");
+  let message = $state("");
   let messageTone = $state<"" | "ok" | "error">("");
   let modalOpen = $state(false);
   let modalMode = $state<"key" | "connecting" | "failed" | "preparing">("key");
@@ -34,16 +36,21 @@
   let preparing = $state(false);
   let countdown = $state(10);
   let dashboardReady = $state(false);
-  let copyText = $state("복사");
+  let copyText = $state("");
   let timer: number | undefined;
+
+  $effect(() => {
+    if (!message) message = messages.setup.wifiListLoaded;
+    if (!copyText) copyText = messages.setup.copy;
+  });
 
   const visibleNetworks = () => (expanded ? networks : networks.slice(0, 5));
   const selectedSsid = () => ssidInput.trim();
 
   function bars(rssi: number): string {
-    if (rssi >= -55) return "강함";
-    if (rssi >= -70) return "보통";
-    return "약함";
+    if (rssi >= -55) return messages.setup.signalStrong;
+    if (rssi >= -70) return messages.setup.signalNormal;
+    return messages.setup.signalWeak;
   }
 
   function setMessage(text: string, tone: "" | "ok" | "error" = ""): void {
@@ -53,28 +60,28 @@
 
   function selectNetwork(network: MockNetwork): void {
     if (!network.locked) {
-      setMessage("오픈 Wi-Fi는 지원하지 않습니다. 비밀번호가 있는 Wi-Fi를 선택하세요.", "error");
+      setMessage(messages.setup.openWifiUnsupportedMessage, "error");
       return;
     }
     selected = network.ssid;
     ssidInput = network.ssid;
-    setMessage("Wi-Fi가 선택되었습니다. 비밀번호를 입력하세요.");
+    setMessage(messages.setup.wifiSelectedMessage);
   }
 
   function clearSelection(): void {
     selected = "";
     ssidInput = "";
-    setMessage("Wi-Fi를 다시 선택하세요.");
+    setMessage(messages.setup.selectWifiAgain);
   }
 
   function refreshNetworks(): void {
-    setMessage("데모 목록을 다시 표시했습니다. 실제 Wi-Fi 검색은 실행하지 않습니다.");
+    setMessage(messages.setup.demoListRefreshed);
   }
 
   function passwordError(): string {
-    if (!selectedSsid()) return "Wi-Fi를 선택하세요.";
-    if (password.length < 8) return "비밀번호는 8자 이상이어야 합니다.";
-    if (password.length > 63) return "비밀번호는 63자 이하이어야 합니다.";
+    if (!selectedSsid()) return messages.setup.selectWifi;
+    if (password.length < 8) return messages.setup.passwordMinLength;
+    if (password.length > 63) return messages.setup.passwordMaxLength;
     return "";
   }
 
@@ -86,26 +93,26 @@
     }
     modalMode = "key";
     modalOpen = true;
-    copyText = "복사";
-    setMessage("API 키를 확인했습니다. 계속 진행하세요.", "ok");
+    copyText = messages.setup.copy;
+    setMessage(messages.setup.apiKeyChecked, "ok");
   }
 
   async function copyKey(): Promise<void> {
     try {
       await navigator.clipboard?.writeText(fakeApiKey);
-      copyText = "복사됨";
+      copyText = messages.setup.copied;
     } catch {
-      copyText = "확인";
+      copyText = messages.setup.check;
     }
   }
 
   function continueFromKey(): void {
     modalMode = "connecting";
-    setMessage("Wi-Fi 연결을 확인하는 중입니다.");
+    setMessage(messages.setup.checkingWifi);
     window.setTimeout(() => {
       modalOpen = false;
       complete = true;
-      setMessage("Wi-Fi 연결이 완료되었습니다.", "ok");
+      setMessage(messages.setup.wifiConnected, "ok");
     }, 900);
   }
 
@@ -114,14 +121,14 @@
     preparing = true;
     dashboardReady = false;
     countdown = 10;
-    setMessage("설정을 마무리하는 중입니다.", "ok");
+    setMessage(messages.setup.finishingSetup, "ok");
     timer = window.setInterval(() => {
       countdown -= 1;
       if (countdown <= 0) {
         if (timer) window.clearInterval(timer);
         timer = undefined;
         dashboardReady = true;
-        setMessage("데모 대시보드 접속 준비가 완료되었습니다.", "ok");
+        setMessage(messages.setup.demoDashboardReady, "ok");
       }
     }, 1000);
   }
@@ -130,48 +137,48 @@
 <main class="setup-shell">
   {#if complete}
     <section class="setup-card complete-card">
-      <div class="status-pill">설정 완료</div>
-      <h1 class="title">Wi-Fi 연결이 완료되었습니다</h1>
-      <p class="desc">데모 화면입니다. 실제 기기 설정은 저장되지 않습니다.</p>
+      <div class="status-pill">{messages.setup.setupComplete}</div>
+      <h1 class="title">{messages.setup.wifiConnectedTitle}</h1>
+      <p class="desc">{messages.setup.demoDescription}</p>
 
       <div class="handoff-notice">
-        <strong>다음 단계</strong>
-        <span>대시보드 접속 준비를 누르면 데모 대시보드로 이동할 수 있습니다.</span>
+        <strong>{messages.setup.nextStep}</strong>
+        <span>{messages.setup.nextStepDescription}</span>
       </div>
 
       <div class="info-grid">
         <div>
-          <strong>기기 IP</strong>
+          <strong>{messages.setup.deviceIp}</strong>
           <span>{fakeIp}</span>
         </div>
         <div>
-          <strong>대시보드</strong>
+          <strong>{messages.setup.dashboard}</strong>
           <span>{fakeDashboard}</span>
         </div>
       </div>
 
       {#if preparing && !dashboardReady}
-        <button class="btn" type="button" disabled>설정을 마무리하는 중입니다... {countdown}초</button>
+        <button class="btn" type="button" disabled>{messages.setup.finishingCountdown(countdown)}</button>
       {:else if dashboardReady}
-        <button class="btn" type="button" onclick={onComplete}>데모 대시보드 접속</button>
+        <button class="btn" type="button" onclick={onComplete}>{messages.setup.openDemoDashboard}</button>
       {:else}
-        <button class="btn" type="button" onclick={prepareDashboard}>대시보드 접속 준비</button>
+        <button class="btn" type="button" onclick={prepareDashboard}>{messages.setup.prepareDashboard}</button>
       {/if}
       <div class:ok={messageTone === "ok"} class:error={messageTone === "error"} class="message">{message}</div>
     </section>
   {:else}
     <section class="setup-card">
-      <p class="eyebrow">초기 Wi-Fi 설정</p>
+      <p class="eyebrow">{messages.setup.initialWifiSetup}</p>
       <h1 class="title">Presence Sensor Demo</h1>
-      <p class="desc">Wi-Fi를 선택하고 비밀번호를 입력하면 초기 설정 화면의 흐름을 확인할 수 있습니다.</p>
-      <div class="notice">이 화면은 레이아웃 확인용 데모입니다. 실제 Wi-Fi 연결이나 ESP32 저장은 실행하지 않습니다.</div>
+      <p class="desc">{messages.setup.demoIntro}</p>
+      <div class="notice">{messages.setup.demoNotice}</div>
 
       <div class="status">
-        <span>상태</span><b>설정 대기</b>
-        <span>설정 주소</span><b>192.168.4.1</b>
+        <span>{messages.setup.status}</span><b>{messages.setup.waitingSetup}</b>
+        <span>{messages.setup.setupAddress}</span><b>192.168.4.1</b>
       </div>
 
-      <div class="field-label">Wi-Fi 목록</div>
+      <div class="field-label">{messages.setup.wifiList}</div>
       <div class="networks">
         {#each visibleNetworks() as network}
           <button
@@ -182,37 +189,37 @@
             onclick={() => selectNetwork(network)}
           >
             <span>{network.ssid}</span>
-            <small>{network.locked ? "잠금 · " : "오픈 Wi-Fi 지원 안 함 · "}{bars(network.rssi)} · {network.rssi}dBm</small>
+            <small>{network.locked ? messages.setup.lockedNetworkPrefix : messages.setup.openWifiUnsupportedPrefix}{bars(network.rssi)} · {network.rssi}dBm</small>
           </button>
         {/each}
       </div>
       {#if networks.length > 5}
         <button class="net-more" type="button" onclick={() => (expanded = !expanded)}>
-          {expanded ? "접기" : `더 보기 ${networks.length - 5}개`}
+          {expanded ? messages.setup.collapse : messages.setup.showMore(networks.length - 5)}
         </button>
       {/if}
 
-      <label for="setup-mock-ssid">Wi-Fi 이름</label>
+      <label for="setup-mock-ssid">{messages.setup.wifiName}</label>
       <div class="ssid-row">
-        <input id="setup-mock-ssid" type="text" bind:value={ssidInput} readonly={!!selected} placeholder="Wi-Fi를 선택하세요" />
+        <input id="setup-mock-ssid" type="text" bind:value={ssidInput} readonly={!!selected} placeholder={messages.setup.selectWifi} />
         {#if selected}
-          <button class="icon-button" type="button" onclick={clearSelection}>변경</button>
+          <button class="icon-button" type="button" onclick={clearSelection}>{messages.setup.change}</button>
         {/if}
       </div>
 
-      <label for="setup-mock-password">비밀번호</label>
+      <label for="setup-mock-password">{messages.setup.wifiPassword}</label>
       <input
         id="setup-mock-password"
         type="password"
         bind:value={password}
         autocomplete="current-password"
-        placeholder="Wi-Fi 비밀번호"
+        placeholder={messages.setup.wifiPassword}
       />
 
       <div class="actions">
-        <button class="btn secondary" type="button" onclick={refreshNetworks}>새로고침</button>
+        <button class="btn secondary" type="button" onclick={refreshNetworks}>{messages.setup.refresh}</button>
         <button class="btn" type="button" disabled={!selectedSsid() || password.length < 8} onclick={connect}>
-          연결하기
+          {messages.setup.connect}
         </button>
       </div>
       <div class:error={messageTone === "error"} class:ok={messageTone === "ok"} class="message">{message}</div>
@@ -224,19 +231,19 @@
   <div class="modal-backdrop" role="presentation">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="setup-modal-title">
       {#if modalMode === "key"}
-        <h2 id="setup-modal-title">API 보안 키를 확인했습니다</h2>
-        <p>Home Assistant 등록 시 아래 키가 필요합니다. 키를 복사한 뒤 Wi-Fi 설정을 계속 진행하세요.</p>
+        <h2 id="setup-modal-title">{messages.setup.apiKeyTitle}</h2>
+        <p>{messages.setup.apiKeyDescription}</p>
         <div class="key-box">
           <code>{fakeApiKey}</code>
           <button type="button" onclick={copyKey}>{copyText}</button>
         </div>
-        <strong class="warning">API 키를 복사한 뒤 확인 버튼을 눌러 Wi-Fi 설정을 계속 진행하세요.</strong>
+        <strong class="warning">{messages.setup.apiKeyWarning}</strong>
         <div class="modal-actions">
-          <button class="btn" type="button" onclick={continueFromKey}>확인</button>
+          <button class="btn" type="button" onclick={continueFromKey}>{messages.common.confirm}</button>
         </div>
       {:else}
-        <h2 id="setup-modal-title">Wi-Fi 연결 확인 중</h2>
-        <p>선택한 Wi-Fi에 연결하고 있습니다.</p>
+        <h2 id="setup-modal-title">{messages.setup.wifiConnectingTitle}</h2>
+        <p>{messages.setup.wifiConnectingDescription}</p>
         <div class="spinner"></div>
       {/if}
     </div>
