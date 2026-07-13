@@ -5,11 +5,13 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build:web": "vite build --mode web",
-    "build:demo": "vite build --mode demo",
+    "build:web": "npm run generate:setup-i18n && vite build --mode web",
+    "build:demo": "npm run generate:setup-i18n && vite build --mode demo",
     "build:dashboard": "npm run build:web && node scripts/generate-dashboard-assets.mjs",
-    "dev:web": "vite --mode web",
-    "typecheck": "tsc --noEmit",
+    "generate:setup-i18n": "node scripts/generate-setup-page-i18n.mjs",
+    "check:setup-i18n": "node scripts/generate-setup-page-i18n.mjs --check",
+    "dev:web": "npm run generate:setup-i18n && vite --mode web",
+    "typecheck": "npm run check:setup-i18n && tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,css}\" \"*.{json,ts}\""
   },
   "keywords": [

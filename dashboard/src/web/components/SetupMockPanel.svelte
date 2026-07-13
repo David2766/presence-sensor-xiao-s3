@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Messages } from "../i18n/types";
+  import { languageOptions, type LanguageCode, type Messages } from "../i18n";
 
   type MockNetwork = {
     ssid: string;
@@ -7,7 +7,34 @@
     locked: boolean;
   };
 
-  let { messages, onComplete = () => {} } = $props<{ messages: Messages; onComplete?: () => void }>();
+  type StatusMessageKey =
+    | "wifiListLoaded"
+    | "openWifiUnsupportedMessage"
+    | "wifiSelectedMessage"
+    | "selectWifiAgain"
+    | "demoListRefreshed"
+    | "selectWifi"
+    | "passwordMinLength"
+    | "passwordMaxLength"
+    | "apiKeyChecked"
+    | "checkingWifi"
+    | "wifiConnected"
+    | "finishingSetup"
+    | "demoDashboardReady";
+
+  type CopyMessageKey = "copy" | "copied" | "check";
+
+  let {
+    messages,
+    language,
+    onLanguageChange,
+    onComplete = () => {}
+  } = $props<{
+    messages: Messages;
+    language: LanguageCode;
+    onLanguageChange: (language: LanguageCode) => void;
+    onComplete?: () => void;
+  }>();
 
   const networks: MockNetwork[] = [
     { ssid: "TEST_SSID", rssi: -31, locked: true },
@@ -28,21 +55,20 @@
   let ssidInput = $state("");
   let password = $state("");
   let expanded = $state(false);
-  let message = $state("");
+  let languageMenuOpen = $state(false);
+  let messageKey = $state<StatusMessageKey>("wifiListLoaded");
   let messageTone = $state<"" | "ok" | "error">("");
   let modalOpen = $state(false);
-  let modalMode = $state<"key" | "connecting" | "failed" | "preparing">("key");
+  let modalMode = $state<"key" | "connecting">("key");
   let complete = $state(false);
   let preparing = $state(false);
   let countdown = $state(10);
   let dashboardReady = $state(false);
-  let copyText = $state("");
+  let copyMessageKey = $state<CopyMessageKey>("copy");
   let timer: number | undefined;
 
-  $effect(() => {
-    if (!message) message = messages.setup.wifiListLoaded;
-    if (!copyText) copyText = messages.setup.copy;
-  });
+  const message = $derived(messages.setup[messageKey]);
+  const copyText = $derived(messages.setup[copyMessageKey]);
 
   const visibleNetworks = () => (expanded ? networks : networks.slice(0, 5));
   const selectedSsid = () => ssidInput.trim();
@@ -53,36 +79,36 @@
     return messages.setup.signalWeak;
   }
 
-  function setMessage(text: string, tone: "" | "ok" | "error" = ""): void {
-    message = text;
+  function setMessage(key: StatusMessageKey, tone: "" | "ok" | "error" = ""): void {
+    messageKey = key;
     messageTone = tone;
   }
 
   function selectNetwork(network: MockNetwork): void {
     if (!network.locked) {
-      setMessage(messages.setup.openWifiUnsupportedMessage, "error");
+      setMessage("openWifiUnsupportedMessage", "error");
       return;
     }
     selected = network.ssid;
     ssidInput = network.ssid;
-    setMessage(messages.setup.wifiSelectedMessage);
+    setMessage("wifiSelectedMessage");
   }
 
   function clearSelection(): void {
     selected = "";
     ssidInput = "";
-    setMessage(messages.setup.selectWifiAgain);
+    setMessage("selectWifiAgain");
   }
 
   function refreshNetworks(): void {
-    setMessage(messages.setup.demoListRefreshed);
+    setMessage("demoListRefreshed");
   }
 
-  function passwordError(): string {
-    if (!selectedSsid()) return messages.setup.selectWifi;
-    if (password.length < 8) return messages.setup.passwordMinLength;
-    if (password.length > 63) return messages.setup.passwordMaxLength;
-    return "";
+  function passwordError(): StatusMessageKey | null {
+    if (!selectedSsid()) return "selectWifi";
+    if (password.length < 8) return "passwordMinLength";
+    if (password.length > 63) return "passwordMaxLength";
+    return null;
   }
 
   function connect(): void {
@@ -93,26 +119,26 @@
     }
     modalMode = "key";
     modalOpen = true;
-    copyText = messages.setup.copy;
-    setMessage(messages.setup.apiKeyChecked, "ok");
+    copyMessageKey = "copy";
+    setMessage("apiKeyChecked", "ok");
   }
 
   async function copyKey(): Promise<void> {
     try {
       await navigator.clipboard?.writeText(fakeApiKey);
-      copyText = messages.setup.copied;
+      copyMessageKey = "copied";
     } catch {
-      copyText = messages.setup.check;
+      copyMessageKey = "check";
     }
   }
 
   function continueFromKey(): void {
     modalMode = "connecting";
-    setMessage(messages.setup.checkingWifi);
+    setMessage("checkingWifi");
     window.setTimeout(() => {
       modalOpen = false;
       complete = true;
-      setMessage(messages.setup.wifiConnected, "ok");
+      setMessage("wifiConnected", "ok");
     }, 900);
   }
 
@@ -121,22 +147,54 @@
     preparing = true;
     dashboardReady = false;
     countdown = 10;
-    setMessage(messages.setup.finishingSetup, "ok");
+    setMessage("finishingSetup", "ok");
     timer = window.setInterval(() => {
       countdown -= 1;
       if (countdown <= 0) {
         if (timer) window.clearInterval(timer);
         timer = undefined;
         dashboardReady = true;
-        setMessage(messages.setup.demoDashboardReady, "ok");
+        setMessage("demoDashboardReady", "ok");
       }
     }, 1000);
   }
 </script>
 
 <main class="setup-shell">
-  {#if complete}
-    <section class="setup-card complete-card">
+  <div class="setup-wrap">
+    <div class="setup-topbar">
+      <div class="language-menu">
+        <button
+          class="language-menu-button"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={languageMenuOpen}
+          onclick={() => (languageMenuOpen = !languageMenuOpen)}
+        >
+          {messages.language.name}
+        </button>
+        {#if languageMenuOpen}
+          <div class="language-menu-list" role="menu">
+            {#each languageOptions as option}
+              <button
+                class:active={language === option.code}
+                type="button"
+                role="menuitem"
+                onclick={() => {
+                  onLanguageChange(option.code);
+                  languageMenuOpen = false;
+                }}
+              >
+                {option.name}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    {#if complete}
+      <section class="setup-card complete-card">
       <div class="status-pill">{messages.setup.setupComplete}</div>
       <h1 class="title">{messages.setup.wifiConnectedTitle}</h1>
       <p class="desc">{messages.setup.demoDescription}</p>
@@ -165,11 +223,11 @@
         <button class="btn" type="button" onclick={prepareDashboard}>{messages.setup.prepareDashboard}</button>
       {/if}
       <div class:ok={messageTone === "ok"} class:error={messageTone === "error"} class="message">{message}</div>
-    </section>
-  {:else}
-    <section class="setup-card">
+      </section>
+    {:else}
+      <section class="setup-card">
       <p class="eyebrow">{messages.setup.initialWifiSetup}</p>
-      <h1 class="title">Presence Sensor Demo</h1>
+      <h1 class="title">{messages.setup.title}</h1>
       <p class="desc">{messages.setup.demoIntro}</p>
       <div class="notice">{messages.setup.demoNotice}</div>
 
@@ -223,8 +281,9 @@
         </button>
       </div>
       <div class:error={messageTone === "error"} class:ok={messageTone === "ok"} class="message">{message}</div>
-    </section>
-  {/if}
+      </section>
+    {/if}
+  </div>
 </main>
 
 {#if modalOpen}
@@ -274,8 +333,78 @@
       sans-serif;
   }
 
-  .setup-card {
+  .setup-wrap {
     width: min(520px, 100%);
+  }
+
+  .setup-topbar {
+    display: flex;
+    justify-content: flex-end;
+    margin: 0 0 8px;
+  }
+
+  .language-menu {
+    position: relative;
+    z-index: 30;
+  }
+
+  .language-menu-button {
+    min-width: 92px;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid rgba(123, 184, 216, 0.24);
+    border-radius: 8px;
+    background: rgba(17, 24, 32, 0.36);
+    color: rgba(215, 238, 252, 0.82);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .language-menu-button::after {
+    content: "";
+    display: inline-block;
+    margin-left: 8px;
+    border-top: 5px solid rgba(215, 238, 252, 0.68);
+    border-right: 4px solid transparent;
+    border-left: 4px solid transparent;
+    vertical-align: middle;
+  }
+
+  .language-menu-list {
+    position: absolute;
+    top: calc(100% + 7px);
+    right: 0;
+    display: grid;
+    min-width: 142px;
+    gap: 5px;
+    padding: 7px;
+    border: 1px solid rgba(123, 184, 216, 0.22);
+    border-radius: 8px;
+    background: rgba(20, 31, 41, 0.98);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+  }
+
+  .language-menu-list button {
+    width: 100%;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #e8f0f6;
+    font: inherit;
+    text-align: left;
+  }
+
+  .language-menu-list button.active {
+    border-color: rgba(6, 214, 160, 0.42);
+    background: rgba(6, 214, 160, 0.15);
+    color: #9ff3d9;
+  }
+
+  .setup-card {
+    width: 100%;
     box-sizing: border-box;
     background: #101923;
     border: 1px solid #263849;
@@ -630,6 +759,10 @@
     .setup-card {
       border-radius: 14px;
       padding: 16px;
+    }
+
+    .setup-wrap {
+      width: 100%;
     }
 
     .title {

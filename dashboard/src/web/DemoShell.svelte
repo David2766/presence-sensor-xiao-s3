@@ -32,5 +32,10 @@
     haSetupHandoffRequired={false}
   />
 {:else}
-  <SetupMockPanel messages={i18n.msg} onComplete={completeSetupMock} />
+  <SetupMockPanel
+    messages={i18n.msg}
+    language={i18n.language}
+    onLanguageChange={i18n.setLanguage}
+    onComplete={completeSetupMock}
+  />
 {/if}
