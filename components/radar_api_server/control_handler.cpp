@@ -1,6 +1,7 @@
 #include "control_handler.h"
 
 #include "http_response.h"
+#include "timezone_catalog.h"
 
 #include <cstdlib>
 #include <string>
@@ -56,6 +57,27 @@ bool read_float_field(const std::string &body, const char *field, float *out) {
   return true;
 }
 
+bool read_string_field(const std::string &body, const char *field, std::string *out) {
+  const std::string key = std::string("\"") + field + "\"";
+  const size_t key_pos = body.find(key);
+  if (key_pos == std::string::npos)
+    return false;
+  const size_t colon = body.find(':', key_pos + key.size());
+  if (colon == std::string::npos)
+    return false;
+  const size_t quote = body.find('"', colon + 1);
+  if (quote == std::string::npos)
+    return false;
+  const size_t end = body.find('"', quote + 1);
+  if (end == std::string::npos || end == quote + 1 || end - quote - 1 > 64)
+    return false;
+  const std::string value = body.substr(quote + 1, end - quote - 1);
+  if (value.find('\\') != std::string::npos)
+    return false;
+  *out = value;
+  return true;
+}
+
 float clamp_led_duration(float value) {
   if (value < 0.0f)
     return 0.0f;
@@ -91,7 +113,7 @@ bool ControlHandler::can_handle(AsyncWebServerRequest *request) const {
   if (request->method() == HTTP_POST)
     return url == "/api/control/status-led" || url == "/api/control/led-duration" ||
            url == "/api/control/environment-correction" || url == "/api/control/temperature-offset" ||
-           url == "/api/control/humidity-offset";
+           url == "/api/control/humidity-offset" || url == "/api/control/timezone";
   return false;
 }
 
@@ -132,13 +154,18 @@ bool ControlHandler::handle(AsyncWebServerRequest *request) {
     return true;
   }
 
+  if (request->method() == HTTP_POST && url == "/api/control/timezone") {
+    this->handle_timezone_(request);
+    return true;
+  }
+
   return false;
 }
 
 void ControlHandler::handle_status_(AsyncWebServerRequest *request) {
   auto *stream = request->beginResponseStream("application/json");
   stream->printf(
-      R"({"ok":true,"statusLedEnabled":%s,"statusLedKnown":%s,"ledBlinkDuration":%.1f,"ledBlinkDurationKnown":%s,"environmentCorrectionEnabled":%s,"environmentCorrectionKnown":%s,"temperatureOffset":%.1f,"temperatureOffsetKnown":%s,"humidityOffset":%.1f,"humidityOffsetKnown":%s})",
+      R"({"ok":true,"statusLedEnabled":%s,"statusLedKnown":%s,"ledBlinkDuration":%.1f,"ledBlinkDurationKnown":%s,"environmentCorrectionEnabled":%s,"environmentCorrectionKnown":%s,"temperatureOffset":%.1f,"temperatureOffsetKnown":%s,"humidityOffset":%.1f,"humidityOffsetKnown":%s,"timezone":"%s","timezoneKnown":%s,"timezoneApplyPending":%s})",
       this->control_state_->status_led_enabled ? "true" : "false",
       this->control_state_->has_status_led_enabled ? "true" : "false", this->control_state_->led_blink_duration,
       this->control_state_->has_led_blink_duration ? "true" : "false",
@@ -147,7 +174,9 @@ void ControlHandler::handle_status_(AsyncWebServerRequest *request) {
       this->control_state_->temperature_offset,
       this->control_state_->has_temperature_offset ? "true" : "false",
       this->control_state_->humidity_offset,
-      this->control_state_->has_humidity_offset ? "true" : "false");
+      this->control_state_->has_humidity_offset ? "true" : "false", this->control_state_->timezone.c_str(),
+      this->control_state_->has_timezone ? "true" : "false",
+      this->control_state_->pending_timezone ? "true" : "false");
   request->send(stream);
 }
 
@@ -229,6 +258,30 @@ void ControlHandler::handle_humidity_offset_(AsyncWebServerRequest *request) {
   this->control_state_->humidity_offset = this->control_state_->requested_humidity_offset;
   this->control_state_->has_humidity_offset = true;
   http_response::send_json(request, 200, R"({"ok":true})");
+}
+
+void ControlHandler::handle_timezone_(AsyncWebServerRequest *request) {
+  std::string body;
+  std::string timezone;
+  if (!body_arg(request, &body) || !read_string_field(body, "timezone", &timezone) ||
+      !is_supported_timezone(timezone.c_str())) {
+    http_response::send_error_info(request, 400, "invalid_timezone", "invalid_request", "error",
+                                   R"({"field":"timezone","target":"timezone"})");
+    return;
+  }
+
+  if (this->control_state_->has_timezone && this->control_state_->timezone == timezone) {
+    http_response::send_json(request, 200, R"({"ok":true,"changed":false})");
+    return;
+  }
+
+  this->control_state_->requested_timezone = timezone;
+  this->control_state_->pending_timezone = true;
+  this->control_state_->timezone = timezone;
+  this->control_state_->has_timezone = true;
+  // ESPHome's IDF web adapter maps unsupported response codes, including 202,
+  // to 500. The pending state remains observable through the status endpoint.
+  http_response::send_json(request, 200, R"({"ok":true,"changed":true,"todayStatsReset":true})");
 }
 
 }  // namespace radar_api_server

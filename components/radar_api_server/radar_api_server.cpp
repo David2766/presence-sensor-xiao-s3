@@ -42,7 +42,7 @@ void RadarApiServer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Stats Upload API: POST /api/stats/upload/start|chunk|commit");
   ESP_LOGCONFIG(TAG, "  System API: GET /api/system/status, POST /api/system/reset");
   ESP_LOGCONFIG(TAG, "  Control Status API: GET /api/control/status");
-  ESP_LOGCONFIG(TAG, "  Control API: POST /api/control/status-led|led-duration");
+  ESP_LOGCONFIG(TAG, "  Control API: POST /api/control/status-led|led-duration|environment-correction|temperature-offset|humidity-offset|timezone");
   ESP_LOGCONFIG(TAG, "  Diagnostics API: GET /api/diagnostics/events|events.txt|replay.ndjson");
   ESP_LOGCONFIG(TAG, "  Floorplan Upload API: POST /api/floorplan/upload/start|chunk|commit");
 }

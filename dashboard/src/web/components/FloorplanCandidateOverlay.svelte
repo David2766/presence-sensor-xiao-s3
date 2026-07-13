@@ -10,6 +10,7 @@
     selectionLocked = false,
     imageWidth = 1,
     imageHeight = 1,
+    ariaLabels,
     allowCandidateEditing = true,
     manualDraftActive = false,
     manualDraftPoints = [],
@@ -323,7 +324,7 @@
   onpointermove={handleVertexPointerMove}
   onpointerup={handleVertexPointerUp}
   onpointercancel={handleVertexPointerUp}
-  aria-label="諛??꾨낫 ?곸뿭"
+  aria-label={ariaLabels.candidateLayer}
 >
   {#if manualDraftActive || splitDraftActive}
     <rect
@@ -334,7 +335,7 @@
       height={imageHeight}
       role="button"
       tabindex="0"
-      aria-label={splitDraftActive ? "Add room split point" : "Add manual room point"}
+      aria-label={splitDraftActive ? ariaLabels.addSplitPoint : ariaLabels.addManualPoint}
       onclick={handleCanvasClick}
       onpointermove={handleCanvasPointerMove}
       onpointerleave={handleCanvasPointerLeave}

@@ -1,3 +1,5 @@
+import type { TimezoneId } from "../timezone-options";
+
 export type LanguageCode = "ko" | "en";
 
 export type MessageParams = Record<string, string | number | boolean | undefined>;
@@ -120,6 +122,10 @@ export type Messages = {
     humidityOffsetApiNotReady: string;
     humidityOffsetChanged: string;
     humidityOffsetFailed: (error: string) => string;
+    timezoneApiNotReady: string;
+    timezoneChanged: string;
+    timezoneApplyTimeout: string;
+    timezoneFailed: (error: string) => string;
     floorplanSaveApiNotReady: string;
     setupModeSelectMessage: string;
     setupInitialChecking: string;
@@ -247,6 +253,18 @@ export type Messages = {
     correctionBehavior: string;
     temperatureOffset: string;
     humidityOffset: string;
+    timezone: string;
+    timezoneChange: string;
+    timezoneDialogDescription: string;
+    timezoneSelectLabel: string;
+    timezoneUseBrowser: string;
+    timezoneBrowserDetected: (timezone: string) => string;
+    timezoneBrowserUnsupported: (timezone: string) => string;
+    timezoneBrowserUnavailable: string;
+    timezoneWarningTitle: string;
+    timezoneWarning: string;
+    timezoneApply: string;
+    timezoneOptions: Record<TimezoneId, string>;
     noSavedFloorplan: string;
   };
   zones: {
@@ -961,6 +979,9 @@ export type Messages = {
       finish: string;
       cancel: string;
       uploadedCandidateAria: string;
+      roomCandidateLayerAria: string;
+      addSplitPointAria: string;
+      addManualRoomPointAria: string;
       zoomInTitle: string;
       zoomOutTitle: string;
       resetZoomTitle: string;

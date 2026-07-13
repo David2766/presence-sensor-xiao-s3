@@ -20,6 +20,7 @@ export interface DeviceApi {
   setEnvironmentCorrection?(enabled: boolean): Promise<void>;
   setTemperatureOffset?(value: number): Promise<void>;
   setHumidityOffset?(value: number): Promise<void>;
+  setTimezone?(timezone: string): Promise<void>;
   saveFloorplan?(document: FloorplanStorageDocument, image: Blob): Promise<void>;
   uploadFirmware?(file: File, onProgress: (progress: FirmwareUploadProgress) => void): Promise<void>;
   resetSystem?(options: WebSystemResetOptions): Promise<WebSystemResetResult>;
@@ -62,6 +63,9 @@ export interface WebControlStatus {
   temperatureOffsetKnown?: boolean;
   humidityOffset?: number;
   humidityOffsetKnown?: boolean;
+  timezone?: string;
+  timezoneKnown?: boolean;
+  timezoneApplyPending?: boolean;
 }
 
 export interface WebSystemStatus {

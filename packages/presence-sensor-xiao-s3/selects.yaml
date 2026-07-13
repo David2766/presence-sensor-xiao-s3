@@ -1,4 +1,31 @@
 select:
+  - platform: template
+    id: device_timezone
+    internal: true
+    optimistic: true
+    restore_value: true
+    initial_option: "Asia/Seoul"
+    options:
+      - "UTC"
+      - "Pacific/Honolulu"
+      - "America/Anchorage"
+      - "America/Los_Angeles"
+      - "America/Denver"
+      - "America/Chicago"
+      - "America/New_York"
+      - "America/Sao_Paulo"
+      - "Europe/London"
+      - "Europe/Berlin"
+      - "Africa/Johannesburg"
+      - "Asia/Dubai"
+      - "Asia/Kolkata"
+      - "Asia/Bangkok"
+      - "Asia/Shanghai"
+      - "Asia/Seoul"
+      - "Asia/Tokyo"
+      - "Australia/Perth"
+      - "Australia/Sydney"
+      - "Pacific/Auckland"
   - platform: ld2450
     ld2450_id: ld2450_radar
     zone_type:

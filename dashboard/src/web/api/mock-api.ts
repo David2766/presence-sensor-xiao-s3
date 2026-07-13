@@ -173,6 +173,7 @@ let ledBlinkDuration = 60;
 let environmentCorrectionEnabled = true;
 let temperatureOffset = 0;
 let humidityOffset = 0;
+let timezone = "Asia/Seoul";
 let stats: WebDeviceStats = createDemoStats();
 
 export const mockApi: DeviceApi = {
@@ -348,7 +349,10 @@ export const mockApi: DeviceApi = {
       temperatureOffset,
       temperatureOffsetKnown: true,
       humidityOffset,
-      humidityOffsetKnown: true
+      humidityOffsetKnown: true,
+      timezone,
+      timezoneKnown: true,
+      timezoneApplyPending: false
     };
   },
 
@@ -379,6 +383,27 @@ export const mockApi: DeviceApi = {
 
   async setHumidityOffset(value: number): Promise<void> {
     humidityOffset = Math.max(-5, Math.min(5, value));
+  },
+
+  async setTimezone(nextTimezone: string): Promise<void> {
+    if (timezone === nextTimezone) return;
+    timezone = nextTimezone;
+    if (stats.today) {
+      stats.today = {
+        ...stats.today,
+        f: 0,
+        r: 0,
+        fz: stats.today.fz.map(() => 0),
+        rz: stats.today.rz.map(() => 0),
+        sz: stats.today.sz.map(() => 0)
+      };
+    }
+    if (stats.heatmap) {
+      stats.heatmap = {
+        ...stats.heatmap,
+        today: `0x${HEATMAP_COLS * HEATMAP_ROWS}`
+      };
+    }
   },
 
   async saveFloorplan(document, image): Promise<void> {
@@ -422,6 +447,7 @@ export const mockApi: DeviceApi = {
       environmentCorrectionEnabled = true;
       temperatureOffset = 0;
       humidityOffset = 0;
+      timezone = "Asia/Seoul";
     }
     if (options.stats) {
       stats = createDemoStats();

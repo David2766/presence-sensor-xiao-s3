@@ -107,6 +107,26 @@ describe("deviceApi chunked storage uploads", () => {
     expect(calls.some((call) => "target" in call.values)).toBe(false);
   });
 
+  it("sends timezone changes through the bounded control endpoint", async () => {
+    const calls: FormCall[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(readFormCall(input, init));
+      return okResponse();
+    }));
+
+    const { deviceApi } = await loadDeviceApi();
+    await deviceApi.setTimezone?.("America/Los_Angeles");
+
+    expect(calls).toEqual([
+      {
+        url: "/api/control/timezone",
+        values: {
+          data: JSON.stringify({ timezone: "America/Los_Angeles" })
+        }
+      }
+    ]);
+  });
+
   it("saves stats through the device base URL and forwards upload progress", async () => {
     const calls: FormCall[] = [];
     const progress: Array<{ loaded: number; total: number; percent: number }> = [];

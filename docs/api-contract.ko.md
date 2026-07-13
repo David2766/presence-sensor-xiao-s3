@@ -314,6 +314,28 @@ code 안에 사용자 표시 문장을 넣지 않는다.
 |---|---|---|---:|---|
 | 제어 설정 | `invalid_request` | error | 400 | `field`, `target` |
 
+시간대 제어는 기존의 크기가 제한된 제어 요청 패턴을 사용한다.
+
+Endpoints:
+
+- `GET /api/control/status`
+- `POST /api/control/timezone`
+
+Rules:
+
+- `POST /api/control/timezone`은 지원하는 IANA `timezone` 식별자를 가진
+  JSON object를 form field `data`로 받는다.
+- 실제 시간대가 변경되면 HTTP `200`과 `changed: true`,
+  `todayStatsReset: true`를 반환한다. 현재 시간대를 다시 요청해도 HTTP
+  `200`을 반환하지만 `changed: false`이며 통계를 초기화하지 않는다.
+  변경 적용은 비동기로 진행되며 pending 상태는 status API에서 제공한다.
+- 다른 시간대를 적용할 때는 당일 카운터와 당일 히트맵만 초기화한다.
+  완료된 과거 일별 기록은 유지해야 한다.
+- `GET /api/control/status`는 비동기 기기 적용 완료를 확인할 수 있도록
+  `timezone`, `timezoneKnown`, `timezoneApplyPending`을 제공한다.
+- 지원하지 않는 시간대 식별자는 `field: timezone`, `target: timezone`을
+  담은 표준 `invalid_request` envelope으로 응답한다.
+
 ### 7.3 업로드 코드
 
 | Code | Severity | HTTP | 의미 | Detail |

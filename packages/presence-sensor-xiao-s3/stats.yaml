@@ -67,6 +67,10 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
+  - id: timezone_applied_id
+    type: std::string
+    restore_value: no
+    initial_value: '""'
   - id: heatmap_last_record_ms
     type: uint32_t
     restore_value: no

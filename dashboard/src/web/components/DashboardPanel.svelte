@@ -16,6 +16,12 @@
   import type { Messages } from "../i18n";
   import RadarScene from "./RadarScene.svelte";
   import type { WebControlStatus, WebDeviceConfig, WebDeviceState, WebSystemStatus } from "../types";
+  import {
+    detectBrowserTimezone,
+    normalizeSupportedTimezone,
+    TIMEZONE_IDS,
+    type TimezoneId
+  } from "../timezone-options";
   import { formatCompactBytes } from "../utils/formatters";
 
   type TabTarget = "zones" | "floorplan" | "stats" | "backup";
@@ -44,6 +50,7 @@
     onSetLegacyPresenceFallback: (enabled: boolean) => void | Promise<void>;
     onSetTemperatureOffset: (value: number) => void | Promise<void>;
     onSetHumidityOffset: (value: number) => void | Promise<void>;
+    onSetTimezone: (timezone: string) => boolean | Promise<boolean>;
     onChangeIntegrationMode: () => void | Promise<void>;
   };
 
@@ -70,12 +77,16 @@
     onSetLegacyPresenceFallback,
     onSetTemperatureOffset,
     onSetHumidityOffset,
+    onSetTimezone,
     onChangeIntegrationMode
   }: Props = $props();
 
   let tuningOpen = $state(false);
   let ledDialogOpen = $state(false);
   let environmentDialogOpen = $state(false);
+  let timezoneDialogOpen = $state(false);
+  let selectedTimezone = $state<TimezoneId>("Asia/Seoul");
+  let timezoneDetectionText = $state("");
   let diagnosticDialogOpen = $state(false);
   let floorplanLoading = $state(false);
   let floorplanError = $state("");
@@ -308,6 +319,48 @@
 
   function closeEnvironmentDialogFromBackdrop(event: MouseEvent): void {
     if (event.target === event.currentTarget) environmentDialogOpen = false;
+  }
+
+  function currentTimezoneLabel(): string {
+    const timezone = normalizeSupportedTimezone(controlStatus?.timezone);
+    if (timezone) return messages.dashboard.timezoneOptions[timezone];
+    return controlStatus?.timezoneKnown && controlStatus.timezone ? controlStatus.timezone : "-";
+  }
+
+  function openTimezoneDialog(): void {
+    selectedTimezone = normalizeSupportedTimezone(controlStatus?.timezone) ?? "Asia/Seoul";
+    timezoneDetectionText = "";
+    timezoneDialogOpen = true;
+  }
+
+  function closeTimezoneDialogFromBackdrop(event: MouseEvent): void {
+    if (event.target === event.currentTarget && !controlActionBusy) timezoneDialogOpen = false;
+  }
+
+  function chooseBrowserTimezone(): void {
+    const detected = detectBrowserTimezone();
+    if (detected.supported) {
+      selectedTimezone = detected.supported;
+      timezoneDetectionText = messages.dashboard.timezoneBrowserDetected(detected.detected ?? detected.supported);
+    } else if (detected.detected) {
+      timezoneDetectionText = messages.dashboard.timezoneBrowserUnsupported(detected.detected);
+    } else {
+      timezoneDetectionText = messages.dashboard.timezoneBrowserUnavailable;
+    }
+  }
+
+  function handleTimezoneSelection(event: Event): void {
+    const timezone = normalizeSupportedTimezone((event.currentTarget as HTMLSelectElement).value);
+    if (timezone) selectedTimezone = timezone;
+  }
+
+  async function applyTimezone(): Promise<void> {
+    const currentTimezone = normalizeSupportedTimezone(controlStatus?.timezone);
+    if (currentTimezone === selectedTimezone) {
+      timezoneDialogOpen = false;
+      return;
+    }
+    if (await onSetTimezone(selectedTimezone)) timezoneDialogOpen = false;
   }
 
   const wifiInfo = $derived(wifiSignalInfo(systemStatus?.wifi?.connected, systemStatus?.wifi?.rssi));
@@ -559,6 +612,10 @@
               <dt>{messages.dashboard.legacyPresenceFallback}</dt>
               <dd>{legacyPresenceFallback ? messages.dashboard.enabled : messages.dashboard.disabledState}</dd>
             </div>
+            <div>
+              <dt>{messages.dashboard.timezone}</dt>
+              <dd>{controlStatusLoading ? messages.dashboard.checking : currentTimezoneLabel()}</dd>
+            </div>
           </dl>
           {#if controlStatusError}
             <p class="dashboard-note">{messages.dashboard.controlStatusFailed(controlStatusError)}</p>
@@ -574,6 +631,7 @@
               {legacyPresenceFallback ? messages.dashboard.turnOff : messages.dashboard.turnOn}
             </button>
             <button type="button" disabled={controlActionBusy} onclick={() => (ledDialogOpen = true)}>{messages.dashboard.statusLedControl}</button>
+            <button type="button" disabled={controlActionBusy} onclick={openTimezoneDialog}>{messages.dashboard.timezoneChange}</button>
             <button type="button" onclick={() => (diagnosticDialogOpen = true)}>{messages.dashboard.diagnostics}</button>
             <button type="button" disabled={integrationModeActionBusy} onclick={onChangeIntegrationMode}>
               {integrationModeActionBusy ? messages.dashboard.changing : integrationModeButtonText}
@@ -638,6 +696,59 @@
 {/if}
 
 <DiagnosticDialog open={diagnosticDialogOpen} state={deviceState} onClose={() => (diagnosticDialogOpen = false)} />
+
+{#if timezoneDialogOpen}
+  <div class="dashboard-dialog-backdrop" role="presentation" onclick={closeTimezoneDialogFromBackdrop}>
+    <div
+      class="floorplan-delete-dialog dashboard-control-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dashboard-timezone-dialog-title"
+    >
+      <div class="dashboard-dialog-heading">
+        <strong id="dashboard-timezone-dialog-title">{messages.dashboard.timezoneChange}</strong>
+        <span>{messages.dashboard.timezoneDialogDescription}</span>
+      </div>
+      <div class="dashboard-dialog-section">
+        <label for="dashboard-timezone-select">{messages.dashboard.timezoneSelectLabel}</label>
+        <select
+          id="dashboard-timezone-select"
+          class="dashboard-timezone-select"
+          value={selectedTimezone}
+          disabled={controlActionBusy}
+          onchange={handleTimezoneSelection}
+        >
+          {#each TIMEZONE_IDS as timezone}
+            <option value={timezone}>{messages.dashboard.timezoneOptions[timezone]}</option>
+          {/each}
+        </select>
+        <button type="button" disabled={controlActionBusy} onclick={chooseBrowserTimezone}>
+          {messages.dashboard.timezoneUseBrowser}
+        </button>
+        {#if timezoneDetectionText}
+          <p class="dashboard-note">{timezoneDetectionText}</p>
+        {/if}
+      </div>
+      <div class="dashboard-timezone-warning" role="alert">
+        <strong>{messages.dashboard.timezoneWarningTitle}</strong>
+        <span>{messages.dashboard.timezoneWarning}</span>
+      </div>
+      <div class="floorplan-delete-dialog-actions">
+        <button type="button" disabled={controlActionBusy} onclick={() => (timezoneDialogOpen = false)}>
+          {messages.common.cancel}
+        </button>
+        <button
+          type="button"
+          class="danger-button"
+          disabled={controlActionBusy || normalizeSupportedTimezone(controlStatus?.timezone) === selectedTimezone}
+          onclick={applyTimezone}
+        >
+          {controlActionBusy ? messages.dashboard.changing : messages.dashboard.timezoneApply}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if environmentDialogOpen}
   <div class="dashboard-dialog-backdrop" role="presentation" onclick={closeEnvironmentDialogFromBackdrop}>

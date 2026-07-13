@@ -142,6 +142,18 @@ The dashboard build generates:
 components/radar_api_server/dashboard_assets.h
 ```
 
+To run dashboard tests from a downloaded source archive:
+
+```powershell
+cd dashboard
+npm test
+```
+
+The native PresenceTracker test requires `cl`, `g++`, or `clang++`. The normal
+`npm test` command reports that test as skipped when no host C++ compiler is
+installed and continues with the remaining tests. Use `npm run test:native` to
+require the native test and fail when a compiler is unavailable.
+
 ### Release Files
 
 Release binaries are included under:
@@ -357,6 +369,18 @@ npm run build:dashboard
 ```text
 components/radar_api_server/dashboard_assets.h
 ```
+
+다운로드한 소스 압축 파일에서 대시보드 테스트를 실행하려면 다음 명령을 사용합니다.
+
+```powershell
+cd dashboard
+npm test
+```
+
+네이티브 PresenceTracker 테스트에는 `cl`, `g++`, `clang++` 중 하나가 필요합니다.
+일반 `npm test`는 호스트 C++ 컴파일러가 없으면 해당 테스트를 건너뛴 것으로
+표시하고 나머지 테스트를 계속 실행합니다. 네이티브 테스트를 필수로 검사하려면
+`npm run test:native`를 사용하며, 이 명령은 컴파일러가 없을 때 실패합니다.
 
 ### 릴리즈 파일
 

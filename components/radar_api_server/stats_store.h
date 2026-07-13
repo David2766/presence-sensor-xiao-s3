@@ -20,6 +20,7 @@ class StatsStore {
   void update_today(const std::string &today_json);
   void record_heatmap_hit(float tx, float ty);
   bool finish_day(const std::string &finished_day_json, const std::string &new_today_json);
+  bool reset_today(const std::string &new_today_json);
   void clear();
 
   bool stream_json(httpd_req *request) const;

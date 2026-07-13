@@ -3826,6 +3826,49 @@ button:disabled {
   gap: 8px;
 }
 
+.dashboard-dialog-section > label {
+  color: #d7eefc;
+  font-size: var(--rz-font-label);
+  font-weight: var(--rz-weight-label);
+}
+
+.dashboard-timezone-select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 34px 0 10px;
+  border: 1px solid rgba(123, 184, 216, 0.32);
+  border-radius: 6px;
+  background: rgba(17, 24, 32, 0.96);
+  color: #d7eefc;
+  font: inherit;
+  font-size: var(--rz-font-control);
+}
+
+.dashboard-timezone-select:focus {
+  border-color: rgba(126, 211, 255, 0.72);
+  outline: none;
+}
+
+.dashboard-timezone-warning {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 107, 122, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 107, 122, 0.08);
+}
+
+.dashboard-timezone-warning strong {
+  color: #ffd7dd;
+  font-size: var(--rz-font-label);
+}
+
+.dashboard-timezone-warning span {
+  color: rgba(255, 215, 221, 0.78);
+  font-size: var(--rz-font-help);
+  line-height: 1.45;
+}
+
 .dashboard-dialog-close-button {
   min-width: 96px;
   min-height: 36px;

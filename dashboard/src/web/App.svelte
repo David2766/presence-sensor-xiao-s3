@@ -553,6 +553,39 @@
     }
   }
 
+  async function setTimezone(timezone: string): Promise<boolean> {
+    if (!api.setTimezone || !api.getControlStatus) {
+      controlStatusError = i18n.msg.app.timezoneApiNotReady;
+      return false;
+    }
+    controlActionBusy = true;
+    try {
+      await api.setTimezone(timezone);
+      let applied = false;
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await wait(200);
+        const nextStatus = await api.getControlStatus();
+        controlStatus = nextStatus;
+        controlStatusLoaded = true;
+        controlStatusError = "";
+        if (!nextStatus.timezoneApplyPending && nextStatus.timezone === timezone) {
+          applied = true;
+          break;
+        }
+      }
+      if (!applied) throw new Error(i18n.msg.app.timezoneApplyTimeout);
+      await refreshStats();
+      setStatus(i18n.msg.app.timezoneChanged, "ok");
+      return true;
+    } catch (error) {
+      controlStatusError = errorMessage(error);
+      setStatus(i18n.msg.app.timezoneFailed(controlStatusError), "error");
+      return false;
+    } finally {
+      controlActionBusy = false;
+    }
+  }
+
   function displayConfig(): WebDeviceConfig {
     return config ? { ...config, zones, calibrationZones } : { version: 1, zones: [], calibrationZones: [] };
   }
@@ -1119,6 +1152,7 @@
       onSetLegacyPresenceFallback={setLegacyPresenceFallback}
       onSetTemperatureOffset={setTemperatureOffset}
       onSetHumidityOffset={setHumidityOffset}
+      onSetTimezone={setTimezone}
       onChangeIntegrationMode={changeIntegrationModeFromDashboard}
     />
   {:else if activeTab === "zones"}

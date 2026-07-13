@@ -256,6 +256,10 @@ export const deviceApi: DeviceApi = {
     await postJsonData("/api/control/humidity-offset", { value });
   },
 
+  async setTimezone(timezone: string): Promise<void> {
+    await postJsonData("/api/control/timezone", { timezone });
+  },
+
   async saveFloorplan(document, image): Promise<void> {
     await deviceStorageQueue.run("floorplan", () => saveFloorplanStorage({ document, image }, { baseUrl: deviceBaseUrl }));
   },

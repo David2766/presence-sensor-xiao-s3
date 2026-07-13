@@ -462,6 +462,12 @@ bool StatsStore::finish_day(const std::string &finished_day_json, const std::str
   return this->persist_();
 }
 
+bool StatsStore::reset_today(const std::string &new_today_json) {
+  this->today_json_ = new_today_json;
+  this->today_heatmap_cells_.fill(0);
+  return this->persist_();
+}
+
 void StatsStore::clear() {
   this->today_json_.clear();
   this->daily_.clear();

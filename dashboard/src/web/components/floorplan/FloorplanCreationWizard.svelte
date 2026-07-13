@@ -203,6 +203,11 @@
             selectionLocked={room.snapEdit.active}
             imageWidth={state.debugInfo?.width ?? 1}
             imageHeight={state.debugInfo?.height ?? 1}
+            ariaLabels={{
+              candidateLayer: text.roomCandidateLayerAria,
+              addSplitPoint: text.addRoomSplitPointAria,
+              addManualPoint: text.addManualRoomPointAria
+            }}
             manualDraftActive={room.manualRoomDraft.active}
             manualDraftPoints={room.manualRoomDraft.points}
             manualDraftHoverPoint={room.manualRoomDraftHover}

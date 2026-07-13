@@ -22,6 +22,7 @@ class ControlHandler {
   void handle_environment_correction_(AsyncWebServerRequest *request);
   void handle_temperature_offset_(AsyncWebServerRequest *request);
   void handle_humidity_offset_(AsyncWebServerRequest *request);
+  void handle_timezone_(AsyncWebServerRequest *request);
 };
 
 }  // namespace radar_api_server

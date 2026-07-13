@@ -203,6 +203,11 @@
                 focusSelectedCandidate={state.editTool === "furniture"}
                 imageWidth={state.document.image.width}
                 imageHeight={state.document.image.height}
+                ariaLabels={{
+                  candidateLayer: text.roomCandidateLayerAria,
+                  addSplitPoint: text.addRoomSplitPointAria,
+                  addManualPoint: text.addManualRoomPointAria
+                }}
                 manualDraftActive={tools.room.manualRoomDraft.active}
                 manualDraftPoints={tools.room.manualRoomDraft.points}
                 manualDraftHoverPoint={tools.room.manualRoomDraftHover}

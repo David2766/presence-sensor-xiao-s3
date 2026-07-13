@@ -29,6 +29,7 @@
     onSetLegacyPresenceFallback: (enabled: boolean) => void | Promise<void>;
     onSetTemperatureOffset: (value: number) => void | Promise<void>;
     onSetHumidityOffset: (value: number) => void | Promise<void>;
+    onSetTimezone: (timezone: string) => boolean | Promise<boolean>;
     onChangeIntegrationMode: () => void | Promise<void>;
   };
 
@@ -55,6 +56,7 @@
     onSetLegacyPresenceFallback,
     onSetTemperatureOffset,
     onSetHumidityOffset,
+    onSetTimezone,
     onChangeIntegrationMode
   }: Props = $props();
 </script>
@@ -83,6 +85,7 @@
     {onSetLegacyPresenceFallback}
     {onSetTemperatureOffset}
     {onSetHumidityOffset}
+    {onSetTimezone}
     {onChangeIntegrationMode}
   />
 </section>

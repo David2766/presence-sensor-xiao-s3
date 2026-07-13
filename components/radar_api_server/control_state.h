@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace esphome {
 namespace radar_api_server {
 
@@ -14,6 +16,8 @@ struct ControlState {
   bool has_temperature_offset = false;
   float humidity_offset = 0.0f;
   bool has_humidity_offset = false;
+  std::string timezone{"Asia/Seoul"};
+  bool has_timezone = false;
 
   bool pending_status_led_enabled = false;
   bool requested_status_led_enabled = true;
@@ -25,6 +29,8 @@ struct ControlState {
   float requested_temperature_offset = 0.0f;
   bool pending_humidity_offset = false;
   float requested_humidity_offset = 0.0f;
+  bool pending_timezone = false;
+  std::string requested_timezone{"Asia/Seoul"};
 };
 
 }  // namespace radar_api_server

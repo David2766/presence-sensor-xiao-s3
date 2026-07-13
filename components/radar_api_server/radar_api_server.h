@@ -19,6 +19,7 @@
 #include "stats_store.h"
 #include "stats_handler.h"
 #include "system_handler.h"
+#include "timezone_catalog.h"
 #include "esphome/core/component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 
@@ -57,6 +58,9 @@ class RadarApiServer : public Component, public AsyncWebHandler {
   void record_heatmap_hit(float tx, float ty) { this->stats_store_.record_heatmap_hit(tx, ty); }
   bool save_finished_stats_day(const std::string &finished_day_json, const std::string &new_today_json) {
     return this->stats_store_.finish_day(finished_day_json, new_today_json);
+  }
+  bool reset_today_stats(const std::string &new_today_json) {
+    return this->stats_store_.reset_today(new_today_json);
   }
   void update_state_json(const std::string &json) { this->state_json_ = json; }
   void update_device_state_json(const DeviceStateJsonInput &input) {
@@ -120,7 +124,7 @@ class RadarApiServer : public Component, public AsyncWebHandler {
   void handoff_wifi_to_esphome_after(uint32_t delay_ms);
   void reset_wifi_credentials_and_reboot_after(uint32_t delay_ms);
   void update_control_status(bool status_led_enabled, float led_blink_duration, bool environment_correction_enabled,
-                             float temperature_offset, float humidity_offset) {
+                             float temperature_offset, float humidity_offset, const std::string &timezone) {
     this->control_state_.status_led_enabled = status_led_enabled;
     this->control_state_.has_status_led_enabled = true;
     this->control_state_.led_blink_duration = led_blink_duration;
@@ -131,6 +135,8 @@ class RadarApiServer : public Component, public AsyncWebHandler {
     this->control_state_.has_temperature_offset = true;
     this->control_state_.humidity_offset = humidity_offset;
     this->control_state_.has_humidity_offset = true;
+    this->control_state_.timezone = timezone;
+    this->control_state_.has_timezone = true;
   }
   bool take_status_led_request(bool *enabled) {
     if (!this->control_state_.pending_status_led_enabled)
@@ -165,6 +171,13 @@ class RadarApiServer : public Component, public AsyncWebHandler {
       return false;
     this->control_state_.pending_humidity_offset = false;
     *value = this->control_state_.requested_humidity_offset;
+    return true;
+  }
+  bool take_timezone_request(std::string *timezone) {
+    if (!this->control_state_.pending_timezone)
+      return false;
+    this->control_state_.pending_timezone = false;
+    *timezone = this->control_state_.requested_timezone;
     return true;
   }
   void update_diagnostic_snapshot(bool presence, bool motion, bool pir_motion, int target_count,

@@ -710,9 +710,39 @@
     json += "]}";
     return json;
   };
-  
+
+  // Timezone changes run in this loop so the RTC, RAM counters, and stored
+  // current-day payload move together. Completed daily history is preserved.
+  std::string requested_timezone;
+  const bool timezone_change_requested = id(radar_api).take_timezone_request(&requested_timezone);
+  if (timezone_change_requested) {
+    auto timezone_call = id(device_timezone).make_call();
+    timezone_call.set_option(requested_timezone);
+    timezone_call.perform();
+  }
+
+  const std::string active_timezone = id(device_timezone).state;
+  if (!active_timezone.empty() && active_timezone != id(timezone_applied_id)) {
+    const char *posix_timezone = esphome::radar_api_server::timezone_posix(active_timezone.c_str());
+    if (posix_timezone != nullptr) {
+      id(sntp_time).set_timezone(posix_timezone);
+      id(timezone_applied_id) = active_timezone;
+    }
+  }
+
   auto time_now = id(sntp_time).now();
-  if (time_now.is_valid()) {
+  if (timezone_change_requested) {
+    reset_today_stats();
+    const int reset_day_key = time_now.is_valid()
+                                  ? time_now.year * 10000 + time_now.month * 100 + time_now.day_of_month
+                                  : 0;
+    id(stats_current_day_key) = reset_day_key;
+    id(heatmap_last_record_ms) = 0;
+    const std::string reset_today_json = compact_day_stats_json(reset_day_key);
+    if (!id(radar_api).reset_today_stats(reset_today_json)) {
+      ESP_LOGE("stats", "Failed to persist current-day reset after timezone change");
+    }
+  } else if (time_now.is_valid()) {
     const int day_key = time_now.year * 10000 + time_now.month * 100 + time_now.day_of_month;
     if (id(stats_current_day_key) == 0) {
       id(stats_current_day_key) = day_key;
@@ -920,7 +950,8 @@
       id(led_blink_duration).state,
       id(environment_correction_enable_switch).state,
       id(temperature_user_offset).state,
-      id(humidity_user_offset).state);
+      id(humidity_user_offset).state,
+      id(device_timezone).state);
 
   // LED auto control logic
   const bool presence = id(presence_combined).state;

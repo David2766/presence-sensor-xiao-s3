@@ -315,6 +315,29 @@ invalid `field` plus the affected `target` in `detail`.
 |---|---|---|---:|---|
 | Control settings | `invalid_request` | error | 400 | `field`, `target` |
 
+Timezone control uses the existing bounded control-request pattern.
+
+Endpoints:
+
+- `GET /api/control/status`
+- `POST /api/control/timezone`
+
+Rules:
+
+- `POST /api/control/timezone` requires form field `data` containing a JSON
+  object with a supported IANA `timezone` identifier.
+- A successful change returns HTTP `200` with `changed: true` and
+  `todayStatsReset: true`. Requesting the active timezone also returns HTTP
+  `200`, with `changed: false`, and does not reset statistics. The change is
+  applied asynchronously and its pending state is exposed by the status API.
+- Applying a different timezone resets only the current-day counters and
+  current-day heatmap. Completed daily history must be preserved.
+- `GET /api/control/status` exposes `timezone`, `timezoneKnown`, and
+  `timezoneApplyPending` so clients can wait for the asynchronous device-side
+  apply operation.
+- Unsupported timezone identifiers return the standard `invalid_request`
+  envelope with `field: timezone` and `target: timezone`.
+
 ### 7.3 Upload Codes
 
 | Code | Severity | HTTP | Meaning | Detail |
