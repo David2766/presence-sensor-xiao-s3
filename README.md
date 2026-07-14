@@ -43,12 +43,18 @@ http://localhost:5173/dashboard/?demo=1
 http://localhost:5173/dashboard/?setup=1
 ```
 
+### Project Status
+
+NAMO v0.5.4 is currently a public beta.
+
+The LD2450 is the primary presence and spatial tracking sensor. NAMO is designed to retain presence more reliably than motion-only sensors, but perfectly motionless presence detection is not guaranteed in every room or installation. Detection performance depends on placement, range, orientation, and the surrounding environment.
+
 ### Quick Start
 
 Most users should use the prebuilt release binaries instead of building the firmware manually.
 
 1. Download the firmware files from `release-assets/v<version>/` or from GitHub Releases.
-2. For the first installation, flash the `factory` image.
+2. For the first installation, follow the USB flashing instructions below and install the `factory` image.
 3. For updating an already installed device, use the `ota` image.
 4. After boot, connect to the device setup AP.
 5. Open `http://192.168.4.1/setup` in a browser.
@@ -64,14 +70,27 @@ psensor7777
 
 The setup AP is a temporary network used only for initial provisioning. After Wi-Fi setup is complete, the device runs on your home Wi-Fi network.
 
+### First USB Flash
+
+1. Download `presence-sensor-xiao-s3-v<version>-factory.bin` from GitHub Releases.
+2. Connect the XIAO ESP32S3 to your computer with a data-capable USB cable.
+3. Open [ESPHome Web](https://web.esphome.io/) in Chrome or Edge.
+4. Click **Connect** and select the XIAO serial port.
+5. Click **Install** and select the downloaded `factory` binary.
+6. Wait for installation and reboot to complete.
+7. Connect to the device setup AP and continue at `http://192.168.4.1/setup`.
+
+Use the `ota` binary only for updates from the installed device's web dashboard. Do not use the `factory` binary for OTA updates.
+
 ### Target Hardware
 
-- Seeed Studio XIAO ESP32S3
-- 8MB Flash / 8MB PSRAM model
-- LD2450-series mmWave radar module
-- PIR sensor
-- BH1750 light sensor
-- SHT4x temperature and humidity sensor
+| Hardware | Required | Notes |
+| --- | ---: | --- |
+| Seeed Studio XIAO ESP32S3, 8MB Flash / 8MB PSRAM | Yes | Required by the current partition and memory configuration |
+| LD2450-series mmWave radar | Yes | Primary presence and spatial tracking sensor |
+| Panasonic EKMC1603111 PIR sensor | Optional | Uses GPIO1; an omitted input must remain electrically stable |
+| BH1750 light sensor | Optional | Shares the I2C bus |
+| SHT4x temperature and humidity sensor | Optional | Shares the I2C bus |
 
 ### Pinout
 
@@ -271,12 +290,18 @@ http://localhost:5173/dashboard/?demo=1
 http://localhost:5173/dashboard/?setup=1
 ```
 
+### 프로젝트 상태
+
+NAMO v0.5.4는 현재 공개 베타 단계입니다.
+
+LD2450은 재실 및 공간 추적에 사용하는 핵심 센서입니다. NAMO는 움직임만 감지하는 센서보다 재실 상태를 안정적으로 유지하도록 설계되었지만, 모든 방과 설치 환경에서 완전히 움직이지 않는 사람의 감지를 보장하지는 않습니다. 감지 성능은 센서 배치, 거리, 방향 및 주변 환경의 영향을 받습니다.
+
 ### 빠른 시작
 
 일반 사용자는 직접 빌드하지 않고 릴리즈 바이너리를 사용하는 것을 권장합니다.
 
 1. `release-assets/v<version>/` 또는 GitHub Releases에서 펌웨어 파일을 받습니다.
-2. 처음 설치할 때는 `factory` 이미지로 플래시합니다.
+2. 처음 설치할 때는 아래 USB 플래싱 절차에 따라 `factory` 이미지를 설치합니다.
 3. 이미 설치된 기기를 업데이트할 때는 `ota` 이미지를 사용합니다.
 4. 부팅 후 기기의 설정 AP에 접속합니다.
 5. 브라우저에서 `http://192.168.4.1/setup`으로 접속합니다.
@@ -292,14 +317,27 @@ psensor7777
 
 설정 AP는 초기 설정을 위한 임시 네트워크입니다. Wi-Fi 설정이 완료되면 기기는 집 Wi-Fi로 동작합니다.
 
+### 최초 USB 플래싱
+
+1. GitHub Releases에서 `presence-sensor-xiao-s3-v<version>-factory.bin`을 받습니다.
+2. 데이터 전송이 가능한 USB 케이블로 XIAO ESP32S3를 컴퓨터에 연결합니다.
+3. Chrome 또는 Edge에서 [ESPHome Web](https://web.esphome.io/)을 엽니다.
+4. **Connect**를 누르고 XIAO의 시리얼 포트를 선택합니다.
+5. **Install**을 누르고 다운로드한 `factory` 바이너리를 선택합니다.
+6. 설치와 재부팅이 끝날 때까지 기다립니다.
+7. 기기의 설정 AP에 연결한 뒤 `http://192.168.4.1/setup`에서 설정을 계속합니다.
+
+`ota` 바이너리는 설치된 기기의 웹 대시보드에서 업데이트할 때만 사용합니다. OTA 업데이트에 `factory` 바이너리를 사용하지 마세요.
+
 ### 대상 하드웨어
 
-- Seeed Studio XIAO ESP32S3
-- 8MB Flash / 8MB PSRAM 모델
-- LD2450 계열 mmWave 레이더 모듈
-- PIR 센서
-- BH1750 조도 센서
-- SHT4x 온습도 센서
+| 하드웨어 | 필수 여부 | 설명 |
+| --- | ---: | --- |
+| Seeed Studio XIAO ESP32S3, 8MB Flash / 8MB PSRAM | 필수 | 현재 파티션 및 메모리 구성에 필요 |
+| LD2450 계열 mmWave 레이더 | 필수 | 재실 및 공간 추적에 사용하는 핵심 센서 |
+| Panasonic EKMC1603111 PIR 센서 | 선택 | GPIO1 사용; 생략할 경우 입력이 전기적으로 안정되어야 함 |
+| BH1750 조도 센서 | 선택 | I2C 버스 공유 |
+| SHT4x 온습도 센서 | 선택 | I2C 버스 공유 |
 
 ### 핀 연결
 
